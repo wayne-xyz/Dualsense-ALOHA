@@ -38,6 +38,7 @@ core_requirements = [
     "pyyaml",
     "dearpygui",
     "pyopenxr",
+    "pydualsense",
 ]
 
 setuptools.setup(
