@@ -65,3 +65,30 @@ what Dualsense-Aloha does :
 ## Install
 
 `pip install .`
+
+###  setup error :
+
+```
+FileNotFoundError: [Errno 2] No such file or directory: 'cmake'
+.....
+ERROR: Failed building wheel for dm-tree
+.....
+ERROR: Failed to build installable wheels for some pyproject.toml based projects (dm-tree)
+```
+
+
+The error occurs because one of the dependencies (dm-tree) requires CMake to be built, but CMake is not installed on your system. 
+
+#### Mac device solution :  
+```
+brew install cmake
+```
+
+#### Windows device solution : 
+```
+choco install cmake
+```
+
+
+
+
