@@ -13,8 +13,10 @@ from bigym.robots.configs.aloha import AlohaRobot
 from mink import SO3
 from reduced_configuration import ReducedConfiguration
 from loop_rate_limiters import RateLimiter
+import os
 
-# 
+
+# Define joint names and their corresponding velocity limits.
 _JOINT_NAMES = [
     "waist",
     "shoulder",
@@ -23,7 +25,6 @@ _JOINT_NAMES = [
     "wrist_angle",
     "wrist_rotate",
 ]
-
 _VELOCITY_LIMITS = {k: np.pi for k in _JOINT_NAMES}
 
 
@@ -119,6 +120,7 @@ class DSAlohaMocapControl:
         data=self.data
 
         # Get indices for joint degrees of freedom, actuator IDs, and positions/velocities for left arm.
+        # TODO: add the reduced configuration for the left and right arms
         self.left_dof_ids = np.array([model.joint(name).id for name in self.left_joint_names])
         self.left_actuator_ids = np.array([model.actuator(name).id for name in self.left_joint_names])
         self.left_relevant_qpos_indices = np.array([model.jnt_qposadr[model.joint(name).id] for name in self.left_joint_names])
@@ -150,3 +152,81 @@ class DSAlohaMocapControl:
         self.camera_names = ['wrist_cam_left', 'wrist_cam_right', 'overhead_cam', 'teleoperator_pov']
         for cam_name in self.camera_names:
             self.data_dict[f'/observations/images/{cam_name}'] = []
+
+    def store_data(self):
+        """
+        Record the current simulation data (joint positions, velocities, actions, and camera images)
+        into the data dictionary.
+        """
+        self.data_dict['/observations/qpos'].append(self.get_qpos())
+        self.data_dict['/observations/qvel'].append(self.get_qvel())
+        self.data_dict['/action'].append(self.get_action())
+        for cam_name in self.camera_names:
+            self.data_dict[f'/observations/images/{cam_name}'].append(self.get_obs(cam_name))
+        self.num_timesteps += 1
+
+    def get_qpos(self):
+        """
+        Retrieve the current joint positions (qpos) for both arms and concatenate with gripper positions.
+        """
+        self.l_qpos = self.data.qpos[self.left_relevant_qpos_indices]
+        self.r_qpos = self.data.qpos[self.right_relevant_qpos_indices]
+        qpos = np.concatenate((self.l_qpos, [self.left_gripper_pos], self.r_qpos, [self.right_gripper_pos]), axis=0)
+        return qpos
+    
+    def get_qvel(self):
+        """
+        Retrieve the current joint velocities (qvel) for both arms.
+        Additionally, compute gripper velocities based on action inputs.
+        """
+        left_gripper_vel = 1 if self.action[6] > 0 else -1 if self.action[6] < 0 else 0
+        right_gripper_vel = 1 if self.action[13] > 0 else -1 if self.action[13] < 0 else 0
+        self.l_qvel = self.data.qvel[self.left_relevant_qvel_indices]
+        self.r_qvel = self.data.qvel[self.right_relevant_qvel_indices]
+        qvel = np.concatenate((self.l_qvel, [left_gripper_vel], self.r_qvel, [right_gripper_vel]), axis=0)
+        return qvel
+    
+    def get_action(self):
+        """
+        Return a copy of the current action command.
+        """
+        return self.action.copy()
+    
+    def get_obs(self, cam_name):
+        """
+        Render and return the image from the specified camera.
+        """
+        renderer, cam_id = self.camera_renderers[cam_name]
+        renderer.update_scene(self.data, cam_id)
+        img = renderer.render()
+        return img
+    
+    def final_save(self):
+        """
+        Save the collected simulation data into an HDF5 file.
+        Each episode is stored as a separate file with the episode index in the filename.
+        """
+        episode_idx = 16  # Note: Update this index for new episodes.
+        t0 = time.time()
+        dataset_path = os.path.join(self.dataset_dir, f'episode_{episode_idx}')
+        with h5py.File(dataset_path + '.hdf5', 'w', rdcc_nbytes=1024 ** 2 * 2) as root:
+            root.attrs['sim'] = True
+            obs = root.create_group('observations')
+            image = obs.create_group('images')
+            # Create datasets for each camera image stream.
+            for cam_name in self.camera_names:
+                _ = image.create_dataset(cam_name, (self.num_timesteps, 480, 640, 3), dtype='uint8',
+                                         chunks=(1, 480, 640, 3))
+            # Create datasets for qpos, qvel, and action.
+            qpos = obs.create_dataset('qpos', (self.num_timesteps, 14))
+            qvel = obs.create_dataset('qvel', (self.num_timesteps, 14))
+            action = root.create_dataset('action', (self.num_timesteps, 14))
+            # Save each piece of data into its respective dataset.
+            for name, array in self.data_dict.items():
+                print(f"shape of {name}: {np.array(array).shape}")
+                print(f"root[name]: {root[name]}")
+                root[name][...] = array[0:self.num_timesteps + 1]
+            print(f'Saving: {time.time() - t0:.1f} secs\n')
+
+
+    
