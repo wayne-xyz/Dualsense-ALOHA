@@ -66,6 +66,10 @@ what Dualsense-Aloha does :
 
 `pip install .`
 
+## Dualsense controller python library support 
+
+`pip install pydualsense` 
+
 ###  setup error :
 
 ```

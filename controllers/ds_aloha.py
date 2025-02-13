@@ -229,4 +229,24 @@ class DSAlohaMocapControl:
             print(f'Saving: {time.time() - t0:.1f} secs\n')
 
 
-    
+    def calibrate(self):
+        """
+        Calibrate the dualsense controllers by averaging a number of sensor readings( acc, gyro, left-stick, right-stick)
+        This offset is then used to adjust raw inputs.
+        """
+        num_samples=100
+        right_samples=[]
+        left_samples=[]
+        for _ in range(num_samples):
+            state=self.ds_controller.state
+            acc=state.accelerometer
+            gyro=state.gyro
+            left_samples.append(acc.X, acc.Y, acc.Z, gyro.Pitch, gyro.Yaw, gyro.Roll, state.LX, state.LY)
+            right_samples.append(acc.X, acc.Y, acc.Z, gyro.Pitch, gyro.Yaw, gyro.Roll, state.RX, state.RY)
+            time.sleep(0.01)
+
+        self.left_offset=np.mean(left_samples, axis=0)
+        self.right_offset=np.mean(right_samples, axis=0)
+        
+        
+            
