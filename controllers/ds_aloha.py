@@ -228,10 +228,11 @@ class DSAlohaMocapControl:
                 root[name][...] = array[0:self.num_timesteps + 1]
             print(f'Saving: {time.time() - t0:.1f} secs\n')
 
-
+    # change the original code to compatible with the dualsense controller,pydualsense
     def calibrate(self):
         """
-        Calibrate the dualsense controllers by averaging a number of sensor readings( acc, gyro, left-stick, right-stick)
+        Calibrate the dualsense controllers by averaging a number of sensor readings
+        ( acc.x, acc.y, acc.z, gyro.pitch, gyro.yaw, gyro.roll, left-stick, right-stick)
         This offset is then used to adjust raw inputs.
         """
         num_samples=100
@@ -245,8 +246,331 @@ class DSAlohaMocapControl:
             right_samples.append(acc.X, acc.Y, acc.Z, gyro.Pitch, gyro.Yaw, gyro.Roll, state.RX, state.RY)
             time.sleep(0.01)
 
-        self.left_offset=np.mean(left_samples, axis=0)
-        self.right_offset=np.mean(right_samples, axis=0)
+        self.left_calibrated_offset=np.mean(left_samples, axis=0)
+        self.right_calibrated_offset=np.mean(right_samples, axis=0)
         
         
-            
+    def so3_to_matrix(self, so3_rotation: SO3) -> np.ndarray:
+        """
+        Convert an SO3 rotation object to a 3x3 rotation matrix.
+        :param so3_rotation: SO3 rotation object
+        :return: 3x3 rotation matrix
+        """
+        return so3_rotation.as_matrix()    
+
+    def matrix_to_so3(self, rotation_matrix: np.ndarray) -> SO3:
+        """
+        Convert a 3x3 rotation matrix to an SO3 rotation object.
+        :param rotation_matrix: 3x3 rotation matrix
+        :return: SO3 rotation object
+        """
+        return SO3.from_matrix(rotation_matrix)
+
+    def apply_rotation(self, current_rotation: SO3, rotation_change: np.ndarray) -> SO3:
+        """
+        Apply an incremental rotation (given as a 3-vector in the Lie algebra) to the current rotation.
+        :param current_rotation: SO3 rotation object
+        :param rotation_change: 3-vector in the Lie algebra
+        :return: SO3 rotation object
+        """
+        rotation_matrix = self.so3_to_matrix(current_rotation)
+        change_matrix = SO3.exp(rotation_change).as_matrix()
+        new_rotation_matrix = change_matrix @ rotation_matrix
+        return self.matrix_to_so3(new_rotation_matrix)
+
+    def update_rotation(self, axis: str, angle: float, side: str):
+        """
+        Update the rotation of the specified side ('left' or 'right') by applying a rotation about the given axis.
+        :param axis: 'x', 'y', or 'z'
+        :param angle: rotation angle in radians
+        :param side: 'left' or 'right'
+        """
+        rotation_change = np.zeros(3)
+        if axis == 'x':
+            rotation_change[0] = angle
+        elif axis == 'y':
+            rotation_change[1] = angle
+        elif axis == 'z':
+            rotation_change[2] = angle
+
+        if side == 'left':
+            self.rot_l = self.apply_rotation(self.rot_l, rotation_change)
+        else:
+            self.rot_r = self.apply_rotation(self.rot_r, rotation_change)
+        self.targets_updated = True  # Mark that the target orientation has been updated.
+
+    def ds_controller_l_update(self):
+        """
+        Update the action vector based on the state of the left DS controller.
+        Map the ds controller to the action vector, and update the action vector. action0-6 are for the left arm, action7-13 are for the right arm
+        The action vector is 14-dimensional: 7 for left, 7 for right.        
+        """
+        state=self.ds_controller.state
+        rotation=state.gyro
+        button_lower=state.DpadLeft # ds controller : True or False, set the target as a nagtive increment, (-0.03), 
+        button_higher=state.DpadRight # ds controller : True or False, set the target as a positive increment, (0.03)
+        joystick_lx=state.LX
+        joystick_ly=state.LY
+        button_up=state.DpadUp # ds controller : True or False, set the target as a positive increment, (0.037)
+        button_down=state.DpadDown # ds controller : True or False, set the target as a nagtive increment, (0)
+
+        # TODO: check the data range for the joystick lx and ly
+        self.action[0]=(joystick_lx-self.left_calibrated_offset[6])* 0.00005
+        self.action[1]=(joystick_ly-self.left_calibrated_offset[7])* 0.00005
+
+        self.action[2]=-0.03 if button_lower else 0.03 if button_higher else 0
+        self.action[3]=rotation.Pitch*0.0001 # TODO: check the data range for the gyro pitch,original is X 
+        self.action[4]=rotation.Yaw*0.0001 # TODO: check the data range for the gyro yaw,original is Y
+        self.action[5]=rotation.Roll*0.0001 # TODO: check the data range for the gyro roll,original is Z
+        self.action[6]=0.037 if button_up else 0.002 if button_down else 0
+
+        self.target_l[0]+=self.action[0]
+        self.target_l[1]+=self.action[1]
+        self.target_l[2]+=self.action[2]
+        
+        # set the target position within the safe range
+        self.target_l = np.clip(self.target_l, [self.x_min, self.y_min, self.z_min], [self.x_max, self.y_max, self.z_max])
+        
+        # update the rotation of the left arm
+        self.update_rotation('x', self.action[3], 'left')
+        self.update_rotation('y', self.action[4], 'left')
+        self.update_rotation('z', self.action[5], 'left')
+
+        #gripper position
+        self.left_gripper_pos=self.action[6]
+        self.targets_updated=True
+
+    def ds_controller_r_update(self):
+        """
+        Update the action vector based on the state of the right DS controller.
+        Map the ds controller to the action vector, and update the action vector. action7-13 are for the right arm
+        The action vector is 14-dimensional: 7 for left, 7 for right.        
+        """
+        state=self.ds_controller.state
+        rotation= state.gyro
+        button_lower=state.square
+        button_higher=state.circle
+        joystick_rx=state.RX
+        joystick_ry=state.RY
+        button_up=state.triangle
+        button_down=state.cross
+
+        #TODO: check the range of the parameters 
+        self.action[7]=(joystick_rx-self.right_calibrated_offset[6])* 0.00005
+        self.action[8]=(joystick_ry-self.right_calibrated_offset[7])* 0.00005
+
+        self.action[9]=-0.03 if button_lower else 0.03 if button_higher else 0
+        self.action[10]=rotation.Pitch*0.0001
+        self.action[11]=rotation.Yaw*0.0001
+        self.action[12]=rotation.Roll*0.0001
+        self.action[13]=0.037 if button_up else 0.002 if button_down else 0
+
+        self.target_r[0]+=self.action[7]
+        self.target_r[1]+=self.action[8]
+        self.target_r[2]+=self.action[9]
+
+        self.target_r = np.clip(self.target_r, [self.x_min, self.y_min, self.z_min], [self.x_max, self.y_max, self.z_max])
+        
+        # rotation
+        self.update_rotation('x', self.action[10], 'right')
+        self.update_rotation('y', self.action[11], 'right')
+        self.update_rotation('z', self.action[12], 'right')
+
+        # gripper position
+        self.right_gripper_pos=self.action[13]
+        self.targets_updated=True
+
+
+    # update the gripper function with the adapative trigger
+    def control_gripper(self, left_gripper_pos, right_gripper_pos):
+        """
+        Update the gripper positions based on the state of the DS controllers.
+        """
+        left_gripper_position=np.clip(left_gripper_pos, 0.02, 0.037)
+        right_gripper_position=np.clip(right_gripper_pos, 0.02, 0.037)
+        self.data.ctrl[self.left_gripper_actuator_id]=left_gripper_position # mujoco's data ctrl is the control signal , when update, send command to simulate
+        self.data.ctrl[self.right_gripper_actuator_id]=right_gripper_position
+
+
+    
+    def add_target_sites(self):
+        """
+        Retrieve site IDs for target markers in the simulation and update their positions.
+        """
+        self.target_site_id_l=self.model.site('aloha_scene/target').id # target: left arm
+        self.target_site_id_r=self.model.site('aloha_scene/target2').id # taget2: right arm
+        self.update_target_sites(self.target_l, self.target_r, self.rot_l, self.rot_r) # target represent the desired position , 
+
+    
+    
+    def update_target_sites(self,target_l,target_r,rot_l,rot_r):
+        """
+        Update the simulation target sites with the current target positions and orientations.
+        :param target_l: desired position of left arm
+        :param target_r: desired position of right arm
+        :param rot_l: desired orientation of left arm
+        :param rot_r: desired orientation of right arm
+        """
+        self.data.site_xpos[self.target_site_id_l] = target_l # current, runtime world position 
+        self.model.site_pos[self.target_site_id_l] = target_l # mujoco's default. nominal position
+        self.data.site_xpos[self.target_site_id_r] = target_r
+        self.model.site_pos[self.target_site_id_r] = target_r
+
+        rot_l_matrix_flat = rot_l.as_matrix().flatten()
+        rot_r_matrix_flat = rot_r.as_matrix().flatten()
+
+        self.data.site_xmat[self.target_site_id_l] = rot_l_matrix_flat
+        self.data.site_xmat[self.target_site_id_r] = rot_r_matrix_flat
+
+    
+    def run(self):
+
+        model=self.model
+        data=self.data
+ 
+        # Define tasks for left and right end-effectors(both position and orientation)
+        # cost parameter: minimize errors in position and orientation, damping factor
+        l_ee_task = mink.FrameTask(
+                frame_name="aloha_scene/left_gripper",
+                frame_type="site",
+                position_cost=1.0,
+                orientation_cost=1.0,
+                lm_damping=1.0,
+            )
+
+        r_ee_task = mink.FrameTask(
+                frame_name="aloha_scene/right_gripper",
+                frame_type="site",
+                position_cost=1.0,
+                orientation_cost=1.0,
+                lm_damping=1.0,
+            )
+
+        # Define the collision avoidance limit
+        collision_avoidance_limit = mink.CollisionAvoidanceLimit(
+            model=model,
+            geom_pairs=[],
+            minimum_distance_from_collisions=0.1,
+            collision_detection_distance=0.1,
+        )
+
+        # Define the limits for the inverse kinematics solver
+        limits = [
+            mink.VelocityLimit(model, self.velocity_limits),
+            collision_avoidance_limit,
+        ]
+
+        solver = "osqp" # solver for the inverse kinematics solver
+        max_iters = 20 # maximum number of iterations for the inverse kinematics solver
+
+        # Launch the viewer with the specified UI settings 
+        try:
+            with mujoco.viewer.launch_passive(
+                model=model, data=data, show_left_ui=True, show_right_ui=False
+            ) as viewer:
+                mujoco.mjv_defaultFreeCamera(model, viewer.cam)
+
+                self.add_target_sites()
+                mujoco.mj_forward(model, data)
+
+                l_target_pose = mink.SE3.from_rotation_and_translation(self.rot_l, self.target_l)
+                r_target_pose = mink.SE3.from_rotation_and_translation(self.rot_r, self.target_r)
+
+                l_ee_task.set_target(l_target_pose)
+                r_ee_task.set_target(r_target_pose)
+
+                sim_rate = RateLimiter(frequency=200.0) 
+
+                # original plan: data recording should be 50hz, 
+                # loop is currently 200hz, thus record every 4th loop
+
+                # changing to 5hz since data collection makes the sim too slow
+                data_recording_interval = 40
+                iters = 0
+
+                # main loop for the simulation 
+                while viewer.is_running():
+                    self.joycon_control_l()
+                    self.joycon_control_r()
+
+                    self.control_gripper(self.left_gripper_pos, self.right_gripper_pos)
+                    if self.targets_updated:
+                        l_target_pose = mink.SE3.from_rotation_and_translation(self.rot_l, self.target_l)
+                        l_ee_task.set_target(l_target_pose)
+                        r_target_pose = mink.SE3.from_rotation_and_translation(self.rot_r, self.target_r)
+                        r_ee_task.set_target(r_target_pose)
+
+                        self.update_target_sites(self.target_l, self.target_r, self.rot_l, self.rot_r)
+                        self.targets_updated = False
+
+                    for _ in range(max_iters):
+                        left_vel = mink.solve_ik(
+                            self.left_configuration,
+                            [l_ee_task],
+                            sim_rate.dt,
+                            solver,
+                            limits=limits,
+                            damping=1e-1,
+                        )
+
+                        right_vel = mink.solve_ik(
+                            self.right_configuration,
+                            [r_ee_task],
+                            sim_rate.dt,
+                            solver,
+                            limits=limits,
+                            damping=1e-1,
+                        )
+
+                        self.left_configuration.integrate_inplace(left_vel, sim_rate.dt)
+                        self.right_configuration.integrate_inplace(right_vel, sim_rate.dt)
+
+                        data.qpos[self.left_relevant_qpos_indices] = self.left_configuration.q
+                        data.qpos[self.right_relevant_qpos_indices] = self.right_configuration.q
+
+                        data.qvel[self.left_relevant_qvel_indices] = self.left_configuration.dq
+                        data.qvel[self.right_relevant_qvel_indices] = self.right_configuration.dq
+
+                        data.ctrl[self.left_actuator_ids] = self.left_configuration.q
+                        data.ctrl[self.right_actuator_ids] = self.right_configuration.q
+
+                        self.control_gripper(self.left_gripper_pos, self.right_gripper_pos)
+
+                        mujoco.mj_step(model, data)
+
+                        iters += 1
+                        if iters == data_recording_interval:
+                            self.store_data()
+                            iters = 0
+
+                        viewer.sync()
+                        sim_rate.sleep()
+
+                    if self.num_timesteps == 100:
+                        sim_rate.sleep()
+                        break
+                    
+        except KeyboardInterrupt:
+            pass
+        finally:
+            # #print small subset of image data
+            # print(f"shape of wrist_cam_left: {np.array(self.data_dict['/observations/images/wrist_cam_left']).shape}")
+            # print(self.data_dict['/observations/images/wrist_cam_left'][0] - self.data_dict['/observations/images/wrist_cam_left'][-1])
+            # print(f"sum: {np.sum(self.data_dict['/observations/images/wrist_cam_left'][0] - self.data_dict['/observations/images/wrist_cam_left'][-1])}")
+            self.ds_controller.close()
+            self.close()
+
+
+    def close(self):
+        # if ctrl+c is called (currently only way to end this), call self.final_save() to save the data
+        self.final_save()
+        for renderer, _ in self.camera_renderers.values():
+            renderer.close()
+
+
+if __name__ == "__main__":
+    try: 
+        controller = DSAlohaMocapControl()
+        controller.run()
+    except KeyboardInterrupt:
+        controller.close()
