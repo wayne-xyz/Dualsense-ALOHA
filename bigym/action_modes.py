@@ -242,3 +242,65 @@ class JointPositionActionMode(ActionMode):
             if not is_target_reached(actuator, self._mojo.physics, TOLERANCE_ANGULAR):
                 return False
         return True
+
+
+# Sourece From the Nintendo ALOHA:https://github.com/AlmondGod/Nintendo-Aloha/blob/master/bigym/action_modes.py 
+class AlohaPositionActionMode(ActionMode):
+    """Control ALOHA Robot joints through position control."""
+
+    def __init__(
+        self,
+        floating_base: bool = False,
+        floating_dofs: Optional[list[PelvisDof]] = None,
+        absolute: bool = False,
+        control_all_joints: bool = True,
+    ):
+        super().__init__(floating_base=floating_base, floating_dofs=floating_dofs)
+        self.absolute = absolute
+        self.control_all_joints = control_all_joints
+
+    def action_space(
+        self, action_scale: float, seed: Optional[int] = None
+    ) -> spaces.Box:
+        bounds = []
+        if self.floating_base:
+            action_bounds = self._robot.floating_base.get_action_bounds()
+            action_bounds = [np.array(b) * action_scale for b in action_bounds]
+            bounds.extend(action_bounds)
+        
+        for actuator in self._robot.limb_actuators:
+            action_bounds = np.array(self._robot.get_limb_control_range(actuator, self.absolute))
+            if not self.absolute:
+                action_bounds *= action_scale
+            bounds.append(action_bounds)
+        
+        for _, gripper in self._robot.grippers.items():
+            bounds.append(gripper.range)
+        
+        bounds = np.array(bounds).copy().astype(np.float32)
+        low, high = bounds.T
+        return spaces.Box(
+            low=low,
+            high=high,
+            dtype=np.float32,
+            seed=seed,
+        )
+
+    def step(self, action: np.ndarray):
+        if self.floating_base:
+            base_action = action[: self._robot.floating_base.dof_amount]
+            action = action[self._robot.floating_base.dof_amount :]
+            self._robot.floating_base.set_control(base_action)
+        
+        for i, actuator in enumerate(self._robot.limb_actuators):
+            actuator = self._mojo.physics.bind(actuator)
+            if self.absolute:
+                actuator.ctrl = action[i]
+            else:
+                actuator.ctrl += action[i]
+        
+        gripper_actions = action[-len(self._robot.grippers) :]
+        for side, action in zip(self._robot.grippers, gripper_actions):
+            self._robot.grippers[side].set_control(action)
+        
+        self._mojo.step()

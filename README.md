@@ -70,7 +70,24 @@ what Dualsense-Aloha does :
 
 `pip install pydualsense` 
 
+## Dev Note
+
+Using the Editable Install for continue development on the `bigym` and `ALOHA`   aka: pip install in editable mode
+
+```
+pip install -e .
+```
+
+### What Nintendo ALOHA does based on the Bigym: 
+  - add the aloha.py 
+  - add AlohaPositionActionMode in action_modes.py
+  - additional lib : `loop_rate_limiters` 
+  - add aloha folder in `bigym/envs/xmls/ `
+
 ###  setup error :
+
+
+#### Error 1: 
 
 ```
 FileNotFoundError: [Errno 2] No such file or directory: 'cmake'
@@ -93,6 +110,7 @@ brew install cmake
 choco install cmake
 ```
 
-
+#### Error 2: 
+Current version of bigym is dependent on the mujoco version 3.1.5 which not works on the python 3.13.2 , but works on the python 3.11.11. I did not tried on other python version.  3.11.11 works For me 
 
 

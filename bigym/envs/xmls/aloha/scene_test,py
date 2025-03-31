@@ -1,0 +1,21 @@
+import mujoco
+import numpy as np
+
+model = mujoco.MjModel.from_xml_path("/Users/almondgod/Repositories/aloha-bigym/bigym/envs/xmls/aloha/scene.xml")
+data = mujoco.MjData(model)
+
+print("Initial joint positions:")
+for i in range(model.nq):
+    print(f"Joint {i}: {data.qpos[i]}")
+
+for _ in range(1000): 
+    mujoco.mj_step(model, data)
+    
+    if _ % 100 == 0:
+        print(f"\nStep {_}:")
+        for i in range(model.nq):
+            print(f"Joint {i}: {data.qpos[i]}")
+
+    for i in range(data.ncon):
+        contact = data.contact[i]
+        print(f"Collision between geoms {contact.geom1} and {contact.geom2}")

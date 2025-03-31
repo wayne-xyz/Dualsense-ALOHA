@@ -1,0 +1,89 @@
+
+<mujoco model="aloha_gripper">
+  <compiler angle="radian" meshdir="assets"/>
+  <asset>
+    <mesh file="vx300s_7_gripper_prop.stl"/>
+    <mesh file="vx300s_7_gripper_bar.stl"/>
+    <mesh file="vx300s_7_gripper_wrist_mount.stl"/>
+    <mesh file="vx300s_8_custom_finger_left.stl"/>
+    <mesh file="vx300s_8_custom_finger_right.stl"/>
+    <mesh file="d405_solid.stl"/>
+    <material name="black" rgba="0.1 0.1 0.1 1"/>
+  </asset>
+
+  <default>
+    <default class="gripper">
+      <default class="finger">
+        <joint type="slide" armature="0.243" damping="40"/>
+        <position ctrlrange="0.002 0.037" kp="2000" kv="124"/>
+        <default class="left_finger">
+          <joint range="0 0.041" axis="0 0 -1"/>
+        </default>
+        <default class="right_finger">
+          <joint range="0 0.041" axis="0 0 -1"/>
+        </default>
+      </default>
+      <default class="visual">
+        <geom type="mesh" group="2" contype="0" conaffinity="0"/>
+      </default>
+      <default class="collision">
+        <geom group="3" type="mesh" condim="6" friction="1 5e-3 5e-4" solref=".01 1"/>
+        <default class="sphere_collision">
+          <geom type="sphere" size="0.0006" rgba="1 0 0 1"/>
+        </default>
+      </default>
+    </default>
+    <geom material="black"/>
+  </default>
+
+  <worldbody>
+    <body name="gripper_base" childclass="gripper" euler="1.5 1.5 1.5">
+      <inertial pos="0.000182154 -0.0341589 -0.0106026" quat="0.435286 0.557074 -0.551539 0.442718"
+        mass="0.42158" diaginertia="0.00110438 0.000790537 0.000469727"/>
+      <geom class="visual" mesh="vx300s_7_gripper_prop" material="black"/>
+      <geom class="collision" mesh="vx300s_7_gripper_prop" material="black"/>
+      <geom class="visual" mesh="vx300s_7_gripper_bar" material="black"/>
+      <geom class="collision" mesh="vx300s_7_gripper_bar" material="black"/>
+      <geom class="visual" pos="0 -0.03525 -0.0227" quat="0 -1 0 -1" type="mesh" mesh="vx300s_7_gripper_wrist_mount" material="black"/>
+      <geom class="collision" pos="0 -0.03525 -0.0227" quat="0 -1 0 -1" type="mesh" mesh="vx300s_7_gripper_wrist_mount" material="black"/>
+      <geom class="visual" pos="0 -0.0824748 -0.0095955" quat="0 0 -0.21644 -0.976296" type="mesh" mesh="d405_solid" material="black"/>
+      <geom class="collision" pos="0 -0.0824748 -0.0095955" quat="0 0 -0.21644 -0.976296" type="mesh" mesh="d405_solid" material="black"/>
+      <camera name="wrist_cam" pos="0 -0.0824748 -0.0095955" mode="fixed" euler="2.70525955359 0 0"
+              focal="1.93e-3 1.93e-3" resolution="1280 720" sensorsize="3896e-6 2140e-6"/>
+      <body name="finger_left" pos="0.0191 -0.0141637 0.0211727" quat="1 -1 -1 1">
+        <inertial pos="0.0143478 -0.0284791 0.0122897" quat="0.535486 0.458766 -0.450407 0.547651"
+          mass="0.0862937" diaginertia="5.86848e-05 4.46887e-05 1.8397e-05"/>
+        <joint name="left_finger" class="left_finger"/>
+        <geom pos="0.0141637 0.0211727 0.06" class="visual" quat="1 1 1 -1" type="mesh"
+          mesh="vx300s_8_custom_finger_left" material="black"/>
+        <geom pos="0.0141637 0.0211727 0.06" class="collision" quat="1 1 1 -1" type="mesh"
+          mesh="vx300s_8_custom_finger_left" material="black"/>
+        <geom name="left_g0" pos="0.013  -0.0892 0.0268" class="sphere_collision"/>
+        <geom name="left_g1" pos="0.0222 -0.0892 0.0268" class="sphere_collision"/>
+        <geom name="left_g2" pos="0.0182 -0.0845 0.0266" class="sphere_collision"/>
+        <site name="finger_left_site" pos="0.015 -0.06 0.02"/>
+      </body>
+      <body name="finger_right" pos="-0.0191 -0.0141637 0.0211727" quat="1 1 1 1">
+        <inertial pos="0.0143711 0.0284792 0.0121421" quat="0.461317 0.537615 -0.545478 0.447894"
+          mass="0.0862932" diaginertia="5.86828e-05 4.46887e-05 1.83949e-05"/>
+        <joint name="right_finger" class="right_finger"/>
+        <geom pos="0.0141637 -0.0211727 0.0597067" class="visual" quat="1 -1 -1 -1" type="mesh"
+          mesh="vx300s_8_custom_finger_right" material="black"/>
+        <geom pos="0.0141637 -0.0211727 0.0597067" class="collision" quat="1 -1 -1 -1" type="mesh"
+          mesh="vx300s_8_custom_finger_right" material="black"/>
+        <geom name="right_g0" pos="0.013  0.0892 0.0268" class="sphere_collision"/>
+        <geom name="right_g1" pos="0.0222 0.0892 0.0268" class="sphere_collision"/>
+        <geom name="right_g2" pos="0.0182 0.0845 0.0266" class="sphere_collision"/>
+        <site name="finger_right_site" pos="0.015 0.06 0.02"/>
+      </body>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <position name="gripper_actuator" joint="left_finger" ctrlrange="0.002 0.037" kp="2000"/>
+  </actuator>
+
+  <equality>
+    <joint joint1="left_finger" joint2="right_finger" polycoef="0 1 0 0 0"/>
+  </equality>
+</mujoco>
