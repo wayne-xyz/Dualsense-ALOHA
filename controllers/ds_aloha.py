@@ -1,6 +1,5 @@
 import pydualsense
 import numpy as np
-import numpy as np
 import mujoco
 import mujoco.viewer
 import mink
@@ -14,7 +13,8 @@ from mink import SO3
 from reduced_configuration import ReducedConfiguration
 from loop_rate_limiters import RateLimiter
 import os
-
+from mujoco import MjModel, MjData
+import logging
 
 # Define joint names and their corresponding velocity limits.
 _JOINT_NAMES = [
@@ -33,9 +33,16 @@ class DSAlohaMocapControl:
     # initialize the control( ds controller and env, from the nintendo aloha)
     def __init__(self):
         # initialize ds controller
-        self.ds_controller=pydualsense.pydualsense()
-        self.ds_controller.init()
+        self.ds_controller = pydualsense.pydualsense()
+        self.controller_connected = False
 
+        try:
+            self.ds_controller.init()
+            print("DualSense controller connected successfully")
+            self.controller_connected = True
+        except Exception as e:
+            print(f"Failed to connect to DualSense controller: {e}")
+            self.controller_connected = False
 
         # initialize env with action mode and observation setting 
         # this env is based on the nintend-aloha , an example of task in bigym- DishawasherClose
@@ -56,8 +63,8 @@ class DSAlohaMocapControl:
         self.env.reset()
 
         # Retrieve the Mujoco model and simulation data.
-        self.model = self.env.unwrapped._mojo.model
-        self.data = self.env.unwrapped._mojo.data
+        self.model = self.env.unwrapped._mojo.model # Mjmodel type
+        self.data = self.env.unwrapped._mojo.data # Mjdata type
         
         # Initialize camera renderers
         self.camera_renderers = {}
@@ -66,7 +73,7 @@ class DSAlohaMocapControl:
             renderer = mujoco.Renderer(self.model, camera_config.resolution[0], camera_config.resolution[1])
             self.camera_renderers[camera_config.name] = (renderer, camera_id)        
 
-        # Set initial target positions for left and right end-effectors.
+        # Set initial target positions for left and right end-effectors. target is the aloha arms
         self.target_l = np.array([-0.4, 0.5, 1.1])
         self.target_r = np.array([0.4, 0.5, 1.1])
 
@@ -97,15 +104,16 @@ class DSAlohaMocapControl:
 
         self.num_timesteps = 0  # Counter for data recording timesteps.
         
-        # Calibrate the JoyCon sensors.
-        # TODO: Calibrate the JoyCon sensors, and initialize the hdf5 storage
-        # self.calibrate()
-        # self.initialize_hdf5_storage()
+        # Calibrate the dualsense controller sensors.
+        if self.controller_connected:
+            self.calibrate()
+
+        self.initialize_hdf5_storage()
 
         # Initialize the action vector (14-dimensional: 7 for left, 7 for right).
         self.action = np.zeros(14)
 
-        # Prepare joint names and velocity limits for both arms.
+        # Prepare joint names and velocity limits for both arms. Create the name lists and velocity limits for the left and right arms
         self.left_joint_names = []
         self.right_joint_names = []
         self.velocity_limits = {}
@@ -121,7 +129,6 @@ class DSAlohaMocapControl:
         data=self.data
 
         # Get indices for joint degrees of freedom, actuator IDs, and positions/velocities for left arm.
-        # TODO: add the reduced configuration for the left and right arms
         self.left_dof_ids = np.array([model.joint(name).id for name in self.left_joint_names])
         self.left_actuator_ids = np.array([model.actuator(name).id for name in self.left_joint_names])
         self.left_relevant_qpos_indices = np.array([model.jnt_qposadr[model.joint(name).id] for name in self.left_joint_names])
@@ -235,6 +242,7 @@ class DSAlohaMocapControl:
         ( acc.x, acc.y, acc.z, gyro.pitch, gyro.yaw, gyro.roll, left-stick, right-stick)
         This offset is then used to adjust raw inputs.
         """
+
         num_samples=100
         right_samples=[]
         left_samples=[]
@@ -242,13 +250,12 @@ class DSAlohaMocapControl:
             state=self.ds_controller.state
             acc=state.accelerometer
             gyro=state.gyro
-            left_samples.append(acc.X, acc.Y, acc.Z, gyro.Pitch, gyro.Yaw, gyro.Roll, state.LX, state.LY)
-            right_samples.append(acc.X, acc.Y, acc.Z, gyro.Pitch, gyro.Yaw, gyro.Roll, state.RX, state.RY)
-            time.sleep(0.01)
+            left_samples.append([acc.X, acc.Y, acc.Z, gyro.Pitch, gyro.Yaw, gyro.Roll, state.LX, state.LY])
+            right_samples.append([acc.X, acc.Y, acc.Z, gyro.Pitch, gyro.Yaw, gyro.Roll, state.RX, state.RY])
+            time.sleep(0.005)
 
         self.left_calibrated_offset=np.mean(left_samples, axis=0)
         self.right_calibrated_offset=np.mean(right_samples, axis=0)
-        
         
     def so3_to_matrix(self, so3_rotation: SO3) -> np.ndarray:
         """
@@ -313,7 +320,6 @@ class DSAlohaMocapControl:
         joystick_ly=state.LY
         button_up=state.DpadUp # ds controller : True or False, set the target as a positive increment, (0.037)
         button_down=state.DpadDown # ds controller : True or False, set the target as a nagtive increment, (0)
-
         # TODO: check the data range for the joystick lx and ly
         self.action[0]=(joystick_lx-self.left_calibrated_offset[6])* 0.00005
         self.action[1]=(joystick_ly-self.left_calibrated_offset[7])* 0.00005
@@ -420,8 +426,7 @@ class DSAlohaMocapControl:
         rot_r_matrix_flat = rot_r.as_matrix().flatten()
 
         self.data.site_xmat[self.target_site_id_l] = rot_l_matrix_flat
-        self.data.site_xmat[self.target_site_id_r] = rot_r_matrix_flat
-
+        self.data.site_xmat[self.target_site_id_r] = rot_r_matrix_flat      
     
     def run(self):
 
@@ -453,8 +458,6 @@ class DSAlohaMocapControl:
             minimum_distance_from_collisions=0.1,
             collision_detection_distance=0.1,
         )
-
-        # Define the limits for the inverse kinematics solver
         limits = [
             mink.VelocityLimit(model, self.velocity_limits),
             collision_avoidance_limit,
@@ -490,8 +493,8 @@ class DSAlohaMocapControl:
 
                 # main loop for the simulation 
                 while viewer.is_running():
-                    self.joycon_control_l()
-                    self.joycon_control_r()
+                    self.ds_controller_l_update()
+                    self.ds_controller_r_update()
 
                     self.control_gripper(self.left_gripper_pos, self.right_gripper_pos)
                     if self.targets_updated:
@@ -557,20 +560,24 @@ class DSAlohaMocapControl:
             # print(f"shape of wrist_cam_left: {np.array(self.data_dict['/observations/images/wrist_cam_left']).shape}")
             # print(self.data_dict['/observations/images/wrist_cam_left'][0] - self.data_dict['/observations/images/wrist_cam_left'][-1])
             # print(f"sum: {np.sum(self.data_dict['/observations/images/wrist_cam_left'][0] - self.data_dict['/observations/images/wrist_cam_left'][-1])}")
-            self.ds_controller.close()
+            if self.controller_connected:
+                self.ds_controller.close()
             self.close()
 
 
     def close(self):
         # if ctrl+c is called (currently only way to end this), call self.final_save() to save the data
-        self.final_save()
+        if self.num_timesteps > 0:
+            self.final_save()
         for renderer, _ in self.camera_renderers.values():
             renderer.close()
 
 
 if __name__ == "__main__":
     try: 
-        controller = DSAlohaMocapControl()
-        controller.run()
+        print("Starting DSAlohaMocapControl")
+        control = DSAlohaMocapControl()
+        print("control start running")
+        control.run()    
     except KeyboardInterrupt:
-        controller.close()
+        control.close()

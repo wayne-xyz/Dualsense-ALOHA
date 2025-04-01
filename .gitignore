@@ -29,3 +29,6 @@ pip-delete-this-directory.txt
 
 # VSCode
 .vscode
+
+# HDF5 files
+data/

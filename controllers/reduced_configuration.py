@@ -7,7 +7,7 @@ from mink.limits import Limit, Constraint
 # original file from https://github.com/AlmondGod/Nintendo-Aloha/blob/master/control/reduced_configuration.py 
 class ReducedConfiguration(Configuration):
     def __init__(self, model, data, relevant_qpos_indices, relevant_qvel_indices):
-        super().__init__(model, data)
+        super().__init__(model=model, q=None) # update based on the mink's configuration
         self.relevant_qpos_indices = relevant_qpos_indices
         self.relevant_qvel_indices = relevant_qvel_indices
 
