@@ -27,7 +27,7 @@ core_requirements = [
     "numpy==1.26.*",
     "safetensors==0.3.3",
     # WARNING: recorded demos might break when updating Mujoco
-    "mujoco==3.1.5",
+    "mujoco>=3.1.5,<3.3.0",
     # needed for pyMJCF
     "dm_control==1.0.19",
     "imageio",
