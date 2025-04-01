@@ -36,6 +36,7 @@ class DSAlohaMocapControl:
         self.ds_controller=pydualsense.pydualsense()
         self.ds_controller.init()
 
+
         # initialize env with action mode and observation setting 
         # this env is based on the nintend-aloha , an example of task in bigym- DishawasherClose
         self.env = DishwasherClose(
@@ -125,7 +126,6 @@ class DSAlohaMocapControl:
         self.left_actuator_ids = np.array([model.actuator(name).id for name in self.left_joint_names])
         self.left_relevant_qpos_indices = np.array([model.jnt_qposadr[model.joint(name).id] for name in self.left_joint_names])
         self.left_relevant_qvel_indices = np.array([model.jnt_dofadr[model.joint(name).id] for name in self.left_joint_names])
-        
         # Create a reduced configuration for the left arm for inverse kinematics.
         self.left_configuration = ReducedConfiguration(model, data, self.left_relevant_qpos_indices, self.left_relevant_qvel_indices)
         

@@ -46,7 +46,7 @@ what Nintendo-Aloha does :
     - 1.2 Integrating ALOHA hardware for teleoperation
     - 1.3 Collecting demonstration data via Nintendo Switch controllers
 - 2 Teleoperation with Nintendo Switch Joycons
-    - 2.1 `teleop_joycon.py` : read the controller's data and send it to the simulation environment
+    - 2.1 `teleop_aloha.py` : read the controller's data and send it to the simulation environment
     - 2.2 Input mapping strategy 
 
 
@@ -54,7 +54,7 @@ what Nintendo-Aloha does :
 what Dualsense-Aloha does : 
 - 1 Extending the Bigym for Bimanual ALOHA Tasks(Same as Nintendo-Aloha)
 - 2 Teleoperation with Dualsense Controller
-    - 2.1 `teleop_dualsense.py` : read the controller's data and send it to the simulation environment
+    - 2.1 `ds_aloha.py` : read the controller's data and send it to the simulation environment
     - 2.2 Input mapping strategy 
     - 2.3 add the unique feature of Dualsense Controller, haptic feedback and adaptive triggers
 
@@ -111,6 +111,16 @@ choco install cmake
 ```
 
 #### Error 2: 
-Current version of bigym is dependent on the mujoco version 3.1.5 which not works on the python 3.13.2 , but works on the python 3.11.11. I did not tried on other python version.  3.11.11 works For me 
+Current version of bigym is dependent on the mujoco version 3.1.5 which not works on the python 3.13.2 , but works on the python 3.12.9 I did not tried on other python version.  3.12.9 works For me 
 
 
+
+
+## Citation
+
+@article{chernyadev2024bigym,
+  title={BiGym: A Demo-Driven Mobile Bi-Manual Manipulation Benchmark},
+  author={Chernyadev, Nikita and Backshall, Nicholas and Ma, Xiao and Lu, Yunfan and Seo, Younggyo and James, Stephen},
+  journal={arXiv preprint arXiv:2407.07788},
+  year={2024}
+}
