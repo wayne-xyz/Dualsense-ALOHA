@@ -114,12 +114,27 @@ choco install cmake
 Current version of bigym is dependent on the mujoco version 3.1.5 which not works on the python 3.13.2 , but works on the python 3.12.9 I did not tried on other python version.  3.12.9 works For me 
 
 #### Error 3:
-When using the mujoco.viewer.launch_passive, the viewer window will not show up. Due to the view can not load the dynamic library hidapi, then manuly set `export DYLD_LIBRARY_PATH=$(brew --prefix hidapi)/lib:$DYLD_LIBRARY_PATH`
+When using the mujoco.viewer.launch_passive, the viewer window will not show up. Due to the view can not load the dynamic library hidapi, then manuly set `export DYLD_LIBRARY_PATH=$(brew --prefix hidapi)/lib:$DYLD_LIBRARY_PATH` befor using mjpython ds_aloha.py
+but in windows it dont need the mjpython to run the mojuco viewr it works directly run the ds_aloha.py
 
 #### Error 4: 
 mink update issue to affect the project 
 - configuration init 
 - solve ik 
+
+#### Error 5:
+Windows pt: 
+```  File "g:\githubproject\dualsense-aloha\bigym\bigym_env.py", line 85, in __init__
+    start_seed = np.random.randint(2**32)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "numpy\\random\\mtrand.pyx", line 780, in numpy.random.mtrand.RandomState.randint
+  File "numpy\\random\\_bounded_integers.pyx", line 2881, in numpy.random._bounded_integers._rand_int32 ```
+
+Numpy default integer type: int32 
+
+- option1: `np.set_default_dtype(np.int64)`
+- option2: `set NUMPY_DEFAULT_DTYPE=int64  # On Windows`
+
 
 
 ## Citation

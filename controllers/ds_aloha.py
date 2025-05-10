@@ -1,3 +1,12 @@
+import numpy as np
+# Override numpy's random.randint to use int64 and return Python int
+original_randint = np.random.randint
+def new_randint(*args, **kwargs):
+    if 'dtype' not in kwargs:
+        kwargs['dtype'] = np.int64
+    return int(original_randint(*args, **kwargs))  # Convert to Python int
+np.random.randint = new_randint
+
 import pydualsense
 import numpy as np
 import mujoco
