@@ -115,7 +115,8 @@ Current version of bigym is dependent on the mujoco version 3.1.5 which not work
 
 #### Error 3:
 When using the mujoco.viewer.launch_passive, the viewer window will not show up. Due to the view can not load the dynamic library hidapi, then manuly set `export DYLD_LIBRARY_PATH=$(brew --prefix hidapi)/lib:$DYLD_LIBRARY_PATH` befor using mjpython ds_aloha.py
-but in windows it dont need the mjpython to run the mojuco viewr it works directly run the ds_aloha.py
+but in windows it dont need the mjpython to run the mojuco viewr it works directly run the ds_aloha.py 
+`macOS has stricter system-level requirements for graphics and OpenGL`
 
 #### Error 4: 
 mink update issue to affect the project 
@@ -128,13 +129,34 @@ Windows pt:
     start_seed = np.random.randint(2**32)
                  ^^^^^^^^^^^^^^^^^^^^^^^^
   File "numpy\\random\\mtrand.pyx", line 780, in numpy.random.mtrand.RandomState.randint
-  File "numpy\\random\\_bounded_integers.pyx", line 2881, in numpy.random._bounded_integers._rand_int32 ```
+  File "numpy\\random\\_bounded_integers.pyx", line 2881, in numpy.random._bounded_integers._rand_int32 
+  ```
 
 Numpy default integer type: int32 
 
 - option1: `np.set_default_dtype(np.int64)`
 - option2: `set NUMPY_DEFAULT_DTYPE=int64  # On Windows`
 
+#### Error 6 Customer of mink
+
+mismatch between the reduced_configruation.nv and model.nv change mink source code : 
+
+- mink.task.py
+ `eye_tg = np.eye(configuration.nv) # eye_tg = np.eye(configuration.model.nv)` 
+- solv_ik.py
+
+```
+def _compute_qp_objective(
+    configuration: Configuration, tasks: Sequence[Task], damping: float
+) -> Objective:
+    H = np.eye(configuration.nv) * damping # H = np.eye(configuration.model.nv) * damping
+    c = np.zeros(configuration.nv) #  c = np.zeros(configuration.model.nv)
+    for task in tasks:
+        H_task, c_task = task.compute_qp_objective(configuration)
+        H += H_task
+        c += c_task
+    return Objective(H, c)
+```
 
 
 ## Citation
