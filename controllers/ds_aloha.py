@@ -40,10 +40,11 @@ _VELOCITY_LIMITS = {k: np.pi for k in _JOINT_NAMES}
 class DSAlohaMocapControl:
 
     # initialize the control( ds controller and env, from the nintendo aloha)
-    def __init__(self):
+    def __init__(self, save_data=False):
         # initialize ds controller
         self.ds_controller = pydualsense.pydualsense()
         self.controller_connected = False
+        self.save_data = save_data  # Flag to control whether to save data
 
         try:
             self.ds_controller.init()
@@ -117,7 +118,12 @@ class DSAlohaMocapControl:
         if self.controller_connected:
             self.calibrate()
 
-        self.initialize_hdf5_storage()
+        # Only initialize HDF5 storage if data saving is enabled
+        if self.save_data:
+            print("Save mode is on, data will be saved to hdf5 file")
+            self.initialize_hdf5_storage()
+        else:
+            print("Save mode is off, data will not be saved to hdf5 file")
 
         # Initialize the action vector (14-dimensional: 7 for left, 7 for right).
         self.action = np.zeros(14)
@@ -172,8 +178,11 @@ class DSAlohaMocapControl:
     def store_data(self):
         """
         Record the current simulation data (joint positions, velocities, actions, and camera images)
-        into the data dictionary.
+        into the data dictionary. Only stores if save_data is enabled.
         """
+        if not self.save_data:
+            return
+            
         self.data_dict['/observations/qpos'].append(self.get_qpos())
         self.data_dict['/observations/qvel'].append(self.get_qvel())
         self.data_dict['/action'].append(self.get_action())
@@ -220,8 +229,11 @@ class DSAlohaMocapControl:
     def final_save(self):
         """
         Save the collected simulation data into an HDF5 file.
-        Each episode is stored as a separate file with the episode index in the filename.
+        Only saves if save_data is enabled and there is data to save.
         """
+        if not self.save_data or self.num_timesteps == 0:
+            return
+            
         episode_idx = 16  # Note: Update this index for new episodes.
         t0 = time.time()
         dataset_path = os.path.join(self.dataset_dir, f'episode_{episode_idx}')
@@ -301,6 +313,7 @@ class DSAlohaMocapControl:
         :param angle: rotation angle in radians
         :param side: 'left' or 'right'
         """
+
         rotation_change = np.zeros(3)
         if axis == 'x':
             rotation_change[0] = angle
@@ -329,14 +342,14 @@ class DSAlohaMocapControl:
         joystick_ly=state.LY
         button_up=state.DpadUp # ds controller : True or False, set the target as a positive increment, (0.037)
         button_down=state.DpadDown # ds controller : True or False, set the target as a nagtive increment, (0)
-        # TODO: check the data range for the joystick lx and ly
-        self.action[0]=(joystick_lx-self.left_calibrated_offset[6])* 0.00005
-        self.action[1]=(joystick_ly-self.left_calibrated_offset[7])* 0.00005
 
+        self.action[0]=(joystick_ly-self.left_calibrated_offset[7])* 0.00005
+        self.action[1]=(joystick_lx-self.left_calibrated_offset[6])* 0.00005
+        # Dualsense controller raw data range: -32768 to 32767 for gyro ( pydualsense), not set range for index, but set the velocity
         self.action[2]=-0.03 if button_lower else 0.03 if button_higher else 0
-        self.action[3]=rotation.Pitch*0.0001 # TODO: check the data range for the gyro pitch,original is X 
-        self.action[4]=rotation.Yaw*0.0001 # TODO: check the data range for the gyro yaw,original is Y
-        self.action[5]=rotation.Roll*0.0001 # TODO: check the data range for the gyro roll,original is Z
+        self.action[3]=(rotation.Pitch-self.left_calibrated_offset[3])*0.000005 
+        self.action[4]=(rotation.Roll-self.left_calibrated_offset[5])*0.000005
+        self.action[5]=(rotation.Yaw-self.left_calibrated_offset[4])*0.000005
         self.action[6]=0.037 if button_up else 0.002 if button_down else 0
 
         self.target_l[0]+=self.action[0]
@@ -370,14 +383,14 @@ class DSAlohaMocapControl:
         button_up=state.triangle
         button_down=state.cross
 
-        #TODO: check the range of the parameters 
-        self.action[7]=(joystick_rx-self.right_calibrated_offset[6])* 0.00005
-        self.action[8]=(joystick_ry-self.right_calibrated_offset[7])* 0.00005
+
+        self.action[7]=(joystick_ry-self.right_calibrated_offset[7])* 0.00005
+        self.action[8]=(joystick_rx-self.right_calibrated_offset[6])* 0.00005
 
         self.action[9]=-0.03 if button_lower else 0.03 if button_higher else 0
-        self.action[10]=rotation.Pitch*0.0001
-        self.action[11]=rotation.Yaw*0.0001
-        self.action[12]=rotation.Roll*0.0001
+        self.action[10]=(rotation.Pitch-self.left_calibrated_offset[3])*0.000005 
+        self.action[11]=(rotation.Roll-self.left_calibrated_offset[5])*0.000005
+        self.action[12]=(rotation.Yaw-self.left_calibrated_offset[4])*0.000005
         self.action[13]=0.037 if button_up else 0.002 if button_down else 0
 
         self.target_r[0]+=self.action[7]
@@ -575,8 +588,8 @@ class DSAlohaMocapControl:
 
 
     def close(self):
-        # if ctrl+c is called (currently only way to end this), call self.final_save() to save the data
-        if self.num_timesteps > 0:
+        # Only save data if save_data is enabled and there is data to save
+        if self.save_data and self.num_timesteps > 0:
             self.final_save()
         for renderer, _ in self.camera_renderers.values():
             renderer.close()

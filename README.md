@@ -111,7 +111,7 @@ choco install cmake
 ```
 
 #### Error 2: 
-Current version of bigym is dependent on the mujoco version 3.1.5 which not works on the python 3.13.2 , but works on the python 3.12.9 I did not tried on other python version.  3.12.9 works For me 
+Current version of bigym is dependent on the mujoco version 3.1.5 which not works on the python 3.13.2 , but works on the python 3.12.9 I did not tried on other python version.  3.12.9 works For me. This project depends on mink (which requires MuJoCo 3.2), but bigym is only compatible with MuJoCo 3.1.5. To ensure compatibility, please install mujoco==3.1.5 after setting up this project. Some mink features may not work if they rely on newer MuJoCo APIs.
 
 #### Error 3:
 When using the mujoco.viewer.launch_passive, the viewer window will not show up. Due to the view can not load the dynamic library hidapi, then manuly set `export DYLD_LIBRARY_PATH=$(brew --prefix hidapi)/lib:$DYLD_LIBRARY_PATH` befor using mjpython ds_aloha.py
