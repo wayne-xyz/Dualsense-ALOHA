@@ -7,6 +7,14 @@ Dualsense™ Controller Teleoperation and ACT autonomy on ALOHA for Bigym benchm
 - Original Readme of [bigym](https://github.com/chernyadev/bigym)
 
 
+
+## Demo: 
+
+### 1. Dishwahser close task telop:
+
+[![Dishwasher Close Task Teleop Demo](https://img.youtube.com/vi/-k_KTURPvFg/0.jpg)](https://www.youtube.com/watch?v=-k_KTURPvFg)
+
+
 ## Read Guide 
 ### Basic Concept : 
 
@@ -60,6 +68,9 @@ what Dualsense-Aloha does :
 
 
 ## Dualsense Controller's Unique feature
+
+### Features of the Dualsense
+- Support both USB and Bluetooth.
 
 
 ### Dishwasher task
