@@ -10,7 +10,7 @@ Dualsense™ Controller Teleoperation and ACT autonomy on ALOHA for Bigym benchm
 
 ## Demo: 
 
-### 1. Dishwahser close task telop:
+### 1. Dishwahser close task teleop:
 
 [![Dishwasher Close Task Teleop Demo](https://img.youtube.com/vi/-k_KTURPvFg/0.jpg)](https://www.youtube.com/watch?v=-k_KTURPvFg)
 
