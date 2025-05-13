@@ -62,6 +62,10 @@ what Dualsense-Aloha does :
 ## Dualsense Controller's Unique feature
 
 
+### Dishwasher task
+- Change the dishwasher's position at `bigym/env/presets/dishwasher.yaml` same as the Nintendo-aloha
+
+
 ## Install
 
 `pip install .`
@@ -160,10 +164,11 @@ def _compute_qp_objective(
 
 
 ## Citation
-
+```
 @article{chernyadev2024bigym,
   title={BiGym: A Demo-Driven Mobile Bi-Manual Manipulation Benchmark},
   author={Chernyadev, Nikita and Backshall, Nicholas and Ma, Xiao and Lu, Yunfan and Seo, Younggyo and James, Stephen},
   journal={arXiv preprint arXiv:2407.07788},
   year={2024}
 }
+```

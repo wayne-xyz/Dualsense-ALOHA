@@ -48,7 +48,10 @@ class DSAlohaMocapControl:
 
         try:
             self.ds_controller.init()
-            print("DualSense controller connected successfully")
+            if self.ds_controller.conType==pydualsense.enums.ConnectionType.BT:
+                print("DualSense controller connected via Bluetooth")
+            else:
+                print("DualSense controller connected via USB")
             self.controller_connected = True
         except Exception as e:
             print(f"Failed to connect to DualSense controller: {e}")
@@ -277,7 +280,7 @@ class DSAlohaMocapControl:
 
         self.left_calibrated_offset=np.mean(left_samples, axis=0)
         self.right_calibrated_offset=np.mean(right_samples, axis=0)
-        
+
     def so3_to_matrix(self, so3_rotation: SO3) -> np.ndarray:
         """
         Convert an SO3 rotation object to a 3x3 rotation matrix.
@@ -343,14 +346,14 @@ class DSAlohaMocapControl:
         button_up=state.DpadUp # ds controller : True or False, set the target as a positive increment, (0.037)
         button_down=state.DpadDown # ds controller : True or False, set the target as a nagtive increment, (0)
 
-        self.action[0]=(joystick_ly-self.left_calibrated_offset[7])* 0.00005
-        self.action[1]=(joystick_lx-self.left_calibrated_offset[6])* 0.00005
+        self.action[0]=(joystick_lx-self.left_calibrated_offset[6])* 0.0001
+        self.action[1]=(-joystick_ly-self.left_calibrated_offset[7])* 0.0001
         # Dualsense controller raw data range: -32768 to 32767 for gyro ( pydualsense), not set range for index, but set the velocity
-        self.action[2]=-0.03 if button_lower else 0.03 if button_higher else 0
+        self.action[2]=-0.03 if button_down else 0.03 if button_up else 0
         self.action[3]=(rotation.Pitch-self.left_calibrated_offset[3])*0.000005 
         self.action[4]=(rotation.Roll-self.left_calibrated_offset[5])*0.000005
         self.action[5]=(rotation.Yaw-self.left_calibrated_offset[4])*0.000005
-        self.action[6]=0.037 if button_up else 0.002 if button_down else 0
+        #self.action[6]=0.037 if button_up else 0.002 if button_down else 0  # gripper position pending
 
         self.target_l[0]+=self.action[0]
         self.target_l[1]+=self.action[1]
@@ -360,9 +363,10 @@ class DSAlohaMocapControl:
         self.target_l = np.clip(self.target_l, [self.x_min, self.y_min, self.z_min], [self.x_max, self.y_max, self.z_max])
         
         # update the rotation of the left arm
-        self.update_rotation('x', self.action[3], 'left')
-        self.update_rotation('y', self.action[4], 'left')
-        self.update_rotation('z', self.action[5], 'left')
+        if state.L1:
+            self.update_rotation('x', self.action[3], 'left')
+            self.update_rotation('y', self.action[4], 'left')
+            self.update_rotation('z', self.action[5], 'left')
 
         #gripper position
         self.left_gripper_pos=self.action[6]
@@ -384,14 +388,14 @@ class DSAlohaMocapControl:
         button_down=state.cross
 
 
-        self.action[7]=(joystick_ry-self.right_calibrated_offset[7])* 0.00005
-        self.action[8]=(joystick_rx-self.right_calibrated_offset[6])* 0.00005
+        self.action[7]=(joystick_rx-self.right_calibrated_offset[6])* 0.0001
+        self.action[8]=(-joystick_ry-self.right_calibrated_offset[7])* 0.0001
 
-        self.action[9]=-0.03 if button_lower else 0.03 if button_higher else 0
+        self.action[9]=-0.03 if button_down else 0.03 if button_up else 0
         self.action[10]=(rotation.Pitch-self.left_calibrated_offset[3])*0.000005 
         self.action[11]=(rotation.Roll-self.left_calibrated_offset[5])*0.000005
         self.action[12]=(rotation.Yaw-self.left_calibrated_offset[4])*0.000005
-        self.action[13]=0.037 if button_up else 0.002 if button_down else 0
+        #self.action[13]=0.037 if button_up else 0.002 if button_down else 0
 
         self.target_r[0]+=self.action[7]
         self.target_r[1]+=self.action[8]
@@ -400,9 +404,10 @@ class DSAlohaMocapControl:
         self.target_r = np.clip(self.target_r, [self.x_min, self.y_min, self.z_min], [self.x_max, self.y_max, self.z_max])
         
         # rotation
-        self.update_rotation('x', self.action[10], 'right')
-        self.update_rotation('y', self.action[11], 'right')
-        self.update_rotation('z', self.action[12], 'right')
+        if state.R1: 
+            self.update_rotation('x', self.action[10], 'right')
+            self.update_rotation('y', self.action[11], 'right')
+            self.update_rotation('z', self.action[12], 'right')
 
         # gripper position
         self.right_gripper_pos=self.action[13]

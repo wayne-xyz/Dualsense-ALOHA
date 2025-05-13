@@ -1,5 +1,5 @@
 # Dishwasher
 props:
   - type: Dishwasher
-    position: [1.2, 0, 0]
-    euler: [0, 0, -90]
+    position: [0, 1, 0.65]
+    euler: [0, 0, 0]
