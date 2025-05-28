@@ -20,6 +20,7 @@ Dualsense™ Controller Teleoperation and ACT autonomy on ALOHA for Bigym benchm
 ![Dishwasher Close Task GIF](controllers/demo/closerdishwasher2.gif)
 <details>
 <summary>Click to see more Dishwasher Close Task GIFs</summary>
+
 ![Dishwasher Close Task GIF](controllers/demo/closerdishwasher1.gif)
 
 </details>
