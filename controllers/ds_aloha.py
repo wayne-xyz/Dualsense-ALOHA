@@ -19,7 +19,7 @@ from bigym.action_modes import AlohaPositionActionMode
 from bigym.utils.observation_config import ObservationConfig, CameraConfig
 from bigym.robots.configs.aloha import AlohaRobot
 from mink import SO3
-from reduced_configuration import ReducedConfiguration
+from mink.configuration import Configuration
 from loop_rate_limiters import RateLimiter
 import os
 from mujoco import MjModel, MjData
@@ -151,15 +151,29 @@ class DSAlohaMocapControl:
         self.left_actuator_ids = np.array([model.actuator(name).id for name in self.left_joint_names])
         self.left_relevant_qpos_indices = np.array([model.jnt_qposadr[model.joint(name).id] for name in self.left_joint_names])
         self.left_relevant_qvel_indices = np.array([model.jnt_dofadr[model.joint(name).id] for name in self.left_joint_names])
-        # Create a reduced configuration for the left arm for inverse kinematics.
-        self.left_configuration = ReducedConfiguration(model, data, self.left_relevant_qpos_indices, self.left_relevant_qvel_indices)
         
         # Similarly, set up for the right arm.
         self.right_dof_ids = np.array([model.joint(name).id for name in self.right_joint_names])
         self.right_actuator_ids = np.array([model.actuator(name).id for name in self.right_joint_names])
         self.right_relevant_qpos_indices = np.array([model.jnt_qposadr[model.joint(name).id] for name in self.right_joint_names])
         self.right_relevant_qvel_indices = np.array([model.jnt_dofadr[model.joint(name).id] for name in self.right_joint_names])
-        self.right_configuration = ReducedConfiguration(model, data, self.right_relevant_qpos_indices, self.right_relevant_qvel_indices)
+        
+        # Create isolated full configurations for each arm (hybrid approach)
+        # This maintains the benefits of independent solving while working with Mink
+        self.left_configuration = Configuration(model=model, q=data.qpos.copy())
+        self.right_configuration = Configuration(model=model, q=data.qpos.copy())
+        
+        # Build full-joint velocity limits for supported joints only (hinge/slide).
+        # Free joints are not supported by Mink's VelocityLimit and are therefore excluded.
+        self.full_velocity_limits = {}
+        for j in range(model.njnt):
+            jtype = model.jnt_type[j]
+            if jtype == mujoco.mjtJoint.mjJNT_HINGE or jtype == mujoco.mjtJoint.mjJNT_SLIDE:
+                jname = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, j)
+                self.full_velocity_limits[jname] = 1e-6
+        for n in _JOINT_NAMES:
+            self.full_velocity_limits[f"aloha_scene/left_{n}"] = _VELOCITY_LIMITS[n]
+            self.full_velocity_limits[f"aloha_scene/right_{n}"] = _VELOCITY_LIMITS[n]
 
 
     def initialize_hdf5_storage(self):
@@ -392,9 +406,9 @@ class DSAlohaMocapControl:
         self.action[8]=(-joystick_ry-self.right_calibrated_offset[7])* 0.0001
 
         self.action[9]=-0.03 if button_down else 0.03 if button_up else 0
-        self.action[10]=(rotation.Pitch-self.left_calibrated_offset[3])*0.000005 
-        self.action[11]=(rotation.Roll-self.left_calibrated_offset[5])*0.000005
-        self.action[12]=(rotation.Yaw-self.left_calibrated_offset[4])*0.000005
+        self.action[10]=(rotation.Pitch-self.right_calibrated_offset[3])*0.000005 
+        self.action[11]=(rotation.Roll-self.right_calibrated_offset[5])*0.000005
+        self.action[12]=(rotation.Yaw-self.right_calibrated_offset[4])*0.000005
         #self.action[13]=0.037 if button_up else 0.002 if button_down else 0
 
         self.target_r[0]+=self.action[7]
@@ -486,7 +500,7 @@ class DSAlohaMocapControl:
             collision_detection_distance=0.1,
         )
         limits = [
-            mink.VelocityLimit(model, self.velocity_limits),
+            mink.VelocityLimit(model, self.full_velocity_limits),
             collision_avoidance_limit,
         ]
 
@@ -534,6 +548,11 @@ class DSAlohaMocapControl:
                         self.targets_updated = False
 
                     for _ in range(max_iters):
+                        # Sync current robot state to both configurations for isolation
+                        self.left_configuration.update(data.qpos.copy())
+                        self.right_configuration.update(data.qpos.copy())
+                        
+                        # Solve IK for left arm independently
                         left_vel = mink.solve_ik(
                             self.left_configuration,
                             [l_ee_task],
@@ -543,6 +562,7 @@ class DSAlohaMocapControl:
                             damping=1e-1,
                         )
 
+                        # Solve IK for right arm independently 
                         right_vel = mink.solve_ik(
                             self.right_configuration,
                             [r_ee_task],
@@ -552,17 +572,26 @@ class DSAlohaMocapControl:
                             damping=1e-1,
                         )
 
-                        self.left_configuration.integrate_inplace(left_vel, sim_rate.dt)
-                        self.right_configuration.integrate_inplace(right_vel, sim_rate.dt)
+                        # Apply only relevant joint velocities to avoid cross-arm interference
+                        masked_left_vel = np.zeros(model.nv)
+                        masked_right_vel = np.zeros(model.nv)
+                        masked_left_vel[self.left_relevant_qvel_indices] = left_vel[self.left_relevant_qvel_indices]
+                        masked_right_vel[self.right_relevant_qvel_indices] = right_vel[self.right_relevant_qvel_indices]
+                        
+                        # Integrate each arm's solution independently
+                        self.left_configuration.integrate_inplace(masked_left_vel, sim_rate.dt)
+                        self.right_configuration.integrate_inplace(masked_right_vel, sim_rate.dt)
 
-                        data.qpos[self.left_relevant_qpos_indices] = self.left_configuration.q
-                        data.qpos[self.right_relevant_qpos_indices] = self.right_configuration.q
+                        # Update robot state with isolated solutions
+                        data.qpos[self.left_relevant_qpos_indices] = self.left_configuration.q[self.left_relevant_qpos_indices]
+                        data.qpos[self.right_relevant_qpos_indices] = self.right_configuration.q[self.right_relevant_qpos_indices]
 
-                        data.qvel[self.left_relevant_qvel_indices] = self.left_configuration.dq
-                        data.qvel[self.right_relevant_qvel_indices] = self.right_configuration.dq
+                        data.qvel[self.left_relevant_qvel_indices] = masked_left_vel[self.left_relevant_qvel_indices]
+                        data.qvel[self.right_relevant_qvel_indices] = masked_right_vel[self.right_relevant_qvel_indices]
 
-                        data.ctrl[self.left_actuator_ids] = self.left_configuration.q
-                        data.ctrl[self.right_actuator_ids] = self.right_configuration.q
+                        # Drive arm joint actuators to current joint positions
+                        data.ctrl[self.left_actuator_ids] = data.qpos[self.left_relevant_qpos_indices]
+                        data.ctrl[self.right_actuator_ids] = data.qpos[self.right_relevant_qpos_indices]
 
                         self.control_gripper(self.left_gripper_pos, self.right_gripper_pos)
 
