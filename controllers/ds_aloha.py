@@ -360,8 +360,8 @@ class DSAlohaMocapControl:
         button_up=state.DpadUp # ds controller : True or False, set the target as a positive increment, (0.037)
         button_down=state.DpadDown # ds controller : True or False, set the target as a nagtive increment, (0)
 
-        self.action[0]=(joystick_lx-self.left_calibrated_offset[6])* 0.0001
-        self.action[1]=(-joystick_ly-self.left_calibrated_offset[7])* 0.0001
+        self.action[0]=(joystick_lx-self.left_calibrated_offset[6])* 0.0003
+        self.action[1]=(-joystick_ly-self.left_calibrated_offset[7])* 0.0003
         # Dualsense controller raw data range: -32768 to 32767 for gyro ( pydualsense), not set range for index, but set the velocity
         self.action[2]=-0.03 if button_down else 0.03 if button_up else 0
         self.action[3]=(rotation.Pitch-self.left_calibrated_offset[3])*0.000005 
@@ -402,8 +402,8 @@ class DSAlohaMocapControl:
         button_down=state.cross
 
 
-        self.action[7]=(joystick_rx-self.right_calibrated_offset[6])* 0.0001
-        self.action[8]=(-joystick_ry-self.right_calibrated_offset[7])* 0.0001
+        self.action[7]=(joystick_rx-self.right_calibrated_offset[6])* 0.0003
+        self.action[8]=(-joystick_ry-self.right_calibrated_offset[7])* 0.0003
 
         self.action[9]=-0.03 if button_down else 0.03 if button_up else 0
         self.action[10]=(rotation.Pitch-self.right_calibrated_offset[3])*0.000005 
