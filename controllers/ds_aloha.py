@@ -79,12 +79,8 @@ class DSAlohaMocapControl:
         self.model = self.env.unwrapped._mojo.model # Mjmodel type
         self.data = self.env.unwrapped._mojo.data # Mjdata type
         
-        # Initialize camera renderers
-        self.camera_renderers = {}
-        for camera_config in self.env.observation_config.cameras:
-            camera_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_CAMERA, camera_config.name)
-            renderer = mujoco.Renderer(self.model, camera_config.resolution[0], camera_config.resolution[1])
-            self.camera_renderers[camera_config.name] = (renderer, camera_id)        
+        # Use BiGym's camera system instead of creating our own renderers
+        # BiGym handles the camera name mapping and rendering internally
 
         # Set initial target positions for left and right end-effectors. target is the aloha arms
         self.target_l = np.array([-0.4, 0.5, 1.1])
@@ -204,7 +200,15 @@ class DSAlohaMocapControl:
         self.data_dict['/observations/qvel'].append(self.get_qvel())
         self.data_dict['/action'].append(self.get_action())
         for cam_name in self.camera_names:
-            self.data_dict[f'/observations/images/{cam_name}'].append(self.get_obs(cam_name))
+            img = self.get_obs(cam_name)
+            if img is not None:
+                # Convert from (3, 480, 640) to (480, 640, 3) format
+                if img.shape[0] == 3:  # channels first
+                    img = np.transpose(img, (1, 2, 0))  # convert to channels last
+                self.data_dict[f'/observations/images/{cam_name}'].append(img)
+            else:
+                # Add empty placeholder if camera failed
+                self.data_dict[f'/observations/images/{cam_name}'].append(np.zeros((480, 640, 3), dtype=np.uint8))
         self.num_timesteps += 1
 
     def get_qpos(self):
@@ -234,14 +238,107 @@ class DSAlohaMocapControl:
         """
         return self.action.copy()
     
+    def debug_cameras(self):
+        """
+        Debug BiGym's camera setup by testing the observation system.
+        Call this function optionally to check camera setup.
+        """
+        print("=== BiGym Camera Setup Debug ===")
+        
+        # Test BiGym's observation system
+        try:
+            print("Testing BiGym observation system...")
+            obs = self.env.get_observation()
+            print(f"✅ BiGym observation system working!")
+            print(f"Available keys in observation: {list(obs.keys())}")
+            
+            # Look for camera images with rgb_ prefix
+            rgb_keys = [key for key in obs.keys() if key.startswith('rgb_')]
+            if rgb_keys:
+                print(f"✅ Found {len(rgb_keys)} RGB camera images")
+                print(f"RGB cameras available: {rgb_keys}")
+                
+                # Test each configured camera
+                print("\n=== Testing Each Camera ===")
+                for camera_config in self.env.observation_config.cameras:
+                    cam_name = camera_config.name
+                    rgb_key = f'rgb_{cam_name}'
+                    if rgb_key in obs:
+                        img = obs[rgb_key]
+                        print(f"✅ Camera '{cam_name}' (key: '{rgb_key}'): {img.shape} {img.dtype}")
+                        print(f"   Expected resolution: {camera_config.resolution}")
+                        print(f"   Image range: [{img.min()}, {img.max()}]")
+                    else:
+                        print(f"❌ Camera '{cam_name}' (looking for '{rgb_key}'): NOT FOUND")
+                
+                # Test our get_obs method
+                print("\n=== Testing get_obs() Method ===")
+                for camera_config in self.env.observation_config.cameras:
+                    cam_name = camera_config.name
+                    test_img = self.get_obs(cam_name)
+                    if test_img is not None:
+                        print(f"✅ get_obs('{cam_name}'): {test_img.shape} {test_img.dtype}")
+                    else:
+                        print(f"❌ get_obs('{cam_name}'): FAILED")
+                        
+            else:
+                print("❌ No RGB camera images found in observation")
+                print(f"Available keys: {list(obs.keys())}")
+                
+        except Exception as e:
+            print(f"❌ Error getting observation: {e}")
+            
+        # Also show MuJoCo model info for reference
+        print(f"\n=== MuJoCo Model Reference ===")
+        print(f"Total cameras in MuJoCo model: {self.model.ncam}")
+        for i in range(min(self.model.ncam, 10)):  # Limit to first 10 cameras
+            cam_name = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_CAMERA, i)
+            print(f"  Camera {i}: '{cam_name}'")
+
     def get_obs(self, cam_name):
         """
-        Render and return the image from the specified camera.
+        Get camera image using BiGym's observation system.
         """
-        renderer, cam_id = self.camera_renderers[cam_name]
-        renderer.update_scene(self.data, cam_id)
-        img = renderer.render()
-        return img
+        # Get full observation from BiGym
+        obs = self.env.get_observation()
+        
+        # BiGym stores camera images with 'rgb_' prefix directly in observation
+        rgb_key = f'rgb_{cam_name}'
+        
+        if rgb_key in obs:
+            return obs[rgb_key]
+        else:
+            print(f"Camera '{cam_name}' (looking for '{rgb_key}') not found in observation")
+            print(f"Available keys: {list(obs.keys())}")
+            return None
+    
+    def get_next_episode_idx(self):
+        """
+        Auto-increment episode index based on existing files in the dataset directory.
+        """
+        from pathlib import Path
+
+        data_dir = Path(self.dataset_dir)
+
+        # Create directory if it doesn't exist
+        data_dir.mkdir(exist_ok=True)
+
+        # Find all existing episode files
+        existing_episodes = list(data_dir.glob('episode_*.hdf5'))
+
+        if not existing_episodes:
+            return 0
+
+        # Extract episode numbers and find the next one
+        episode_nums = []
+        for episode_file in existing_episodes:
+            try:
+                num = int(episode_file.stem.split('_')[1])
+                episode_nums.append(num)
+            except (ValueError, IndexError):
+                continue
+
+        return max(episode_nums) + 1 if episode_nums else 0
     
     def final_save(self):
         """
@@ -251,7 +348,7 @@ class DSAlohaMocapControl:
         if not self.save_data or self.num_timesteps == 0:
             return
             
-        episode_idx = 16  # Note: Update this index for new episodes.
+        episode_idx = self.get_next_episode_idx()
         t0 = time.time()
         dataset_path = os.path.join(self.dataset_dir, f'episode_{episode_idx}')
         with h5py.File(dataset_path + '.hdf5', 'w', rdcc_nbytes=1024 ** 2 * 2) as root:
@@ -625,15 +722,15 @@ class DSAlohaMocapControl:
         # Only save data if save_data is enabled and there is data to save
         if self.save_data and self.num_timesteps > 0:
             self.final_save()
-        for renderer, _ in self.camera_renderers.values():
-            renderer.close()
+        # No need to close renderers since we're using BiGym's camera system
 
 
 if __name__ == "__main__":
     try: 
         print("Starting DSAlohaMocapControl")
-        control = DSAlohaMocapControl()
+        control = DSAlohaMocapControl(save_data=True)
         print("control start running")
+        control.debug_cameras()
         control.run()    
     except KeyboardInterrupt:
         control.close()
