@@ -17,6 +17,9 @@ import threading
 import sys
 import os
 
+# Import image monitoring utilities
+from image_monitor import ImageMonitor
+
 # Add demonstration folder to path for imports
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
@@ -37,17 +40,12 @@ from ds_aloha import _JOINT_NAMES, _VELOCITY_LIMITS
 # ===== INFERENCE CONFIGURATION PARAMETERS =====
 SIM_RATE = 200.0                    # Simulation frequency (Hz) - matching original author
 INFERENCE_STEP = 1000               # Total inference steps to run
-POLICY_QUERY_INTERVAL = 20          # Query policy every N steps (matching original: 20 steps = 100ms at 200Hz)  
-IK_MAX_ITERS = 20                   # Maximum IK solver iterations per step
+POLICY_QUERY_INTERVAL = 5          # Query policy every N steps
+IK_MAX_ITERS = 40                   # Maximum IK solver iterations per step
 TEMPORAL_AGG_M = 0.1                # Temporal aggregation parameter m (smaller = faster new observation incorporation)
-ACTION_BUFFER_SIZE = 100            # Maximum predictions stored per timestep buffer
-NUM_TIMESTEP_BUFFERS = 100          # Number of future timestep buffers to maintain
+TEMPORAL_BUFFER_SIZE = 100           # Fixed length for single dynamic temporal aggregation buffer  
+TEMPORAL_WINDOW_SIZE = 15            # Number of recent predictions to use for temporal aggregation
 ENABLE_IMAGE_MONITORING = False      # Enable/disable image monitoring windows
-
-
-
-
-
 
 
 
@@ -110,10 +108,9 @@ class ACTInference:
         # Initialize environment (same setup as ds_aloha.py)
         self.setup_environment()
         
-        # Improved temporal aggregation (matching second author's approach)
+        # Simple single dynamic buffer for temporal aggregation (much cleaner!)
         from collections import deque
-        self.action_buffers = [deque(maxlen=ACTION_BUFFER_SIZE) for _ in range(NUM_TIMESTEP_BUFFERS)]
-        self.current_timestep = 0
+        self.action_buffer = deque(maxlen=TEMPORAL_BUFFER_SIZE)  # Single fixed-length buffer
         self.num_loop_iters = 0
         
         # Exponential weighting parameters (matching second author)
@@ -121,8 +118,10 @@ class ACTInference:
         
         # Image monitoring system
         self.image_monitoring = ENABLE_IMAGE_MONITORING
-        self.monitor_windows_created = False
-        self.latest_images = {}  # Store latest images for monitoring
+        self.image_monitor = ImageMonitor(
+            camera_names=self.policy_config['camera_names'],
+            enabled=self.image_monitoring
+        )
         
         # Get current end-effector positions from the scene instead of hardcoded values
         # Forward kinematics to get current positions
@@ -516,82 +515,101 @@ class ACTInference:
         return curr_image
     
     def create_monitoring_windows(self):
-        """Create single OpenCV window with 2x2 grid for monitoring camera images"""
-        if not self.image_monitoring:
-            return
-            
-        # Create single window for all camera views
-        self.monitor_window_name = "Camera Monitor - All Views"
-        cv2.namedWindow(self.monitor_window_name, cv2.WINDOW_NORMAL)
-        cv2.resizeWindow(self.monitor_window_name, 640, 480)  # 2x2 grid of 320x240 images
-        
-        self.monitor_windows_created = True
-        print("Created unified image monitoring window")
+        """Create monitoring windows using ImageMonitor"""
+        self.image_monitor.create_monitoring_windows()
     
     def update_image_monitoring(self, images_list):
-        """Update single monitoring window with 2x2 grid of current images"""
-        if not self.image_monitoring or not self.monitor_windows_created:
-            return
-        
-        # Process all images and create composite
-        processed_images = []
-        
-        for i, cam_name in enumerate(self.policy_config['camera_names']):
-            if i < len(images_list):
-                img = images_list[i]
-                
-                # Convert from policy format (C, H, W) to display format (H, W, C)
-                if len(img.shape) == 3 and img.shape[0] == 3:
-                    display_img = np.transpose(img, (1, 2, 0))
-                else:
-                    display_img = img
-                
-                # Convert to uint8 if needed
-                if display_img.dtype == np.float32 or display_img.dtype == np.float64:
-                    display_img = (display_img * 255).astype(np.uint8)
-                
-                # Convert RGB to BGR for OpenCV display
-                if len(display_img.shape) == 3:
-                    display_img = cv2.cvtColor(display_img, cv2.COLOR_RGB2BGR)
-                
-                # Resize to standard monitoring size
-                display_img = cv2.resize(display_img, (320, 240))
-                
-                # Add camera name label
-                cv2.putText(display_img, cam_name, (5, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-                
-                processed_images.append(display_img)
-            else:
-                # Create black placeholder if camera missing
-                placeholder = np.zeros((240, 320, 3), dtype=np.uint8)
-                cv2.putText(placeholder, f"No {cam_name}", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-                processed_images.append(placeholder)
-        
-        # Ensure we have exactly 4 images (pad with black if needed)
-        while len(processed_images) < 4:
-            placeholder = np.zeros((240, 320, 3), dtype=np.uint8)
-            cv2.putText(placeholder, "Empty", (120, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (128, 128, 128), 2)
-            processed_images.append(placeholder)
-        
-        # Create 2x2 grid composite image
-        # Top row: cameras 0 and 1
-        top_row = np.hstack([processed_images[0], processed_images[1]])
-        # Bottom row: cameras 2 and 3  
-        bottom_row = np.hstack([processed_images[2], processed_images[3]])
-        # Combine rows
-        composite_image = np.vstack([top_row, bottom_row])
-        
-        # Display composite image
-        cv2.imshow(self.monitor_window_name, composite_image)
-        
-        # Non-blocking waitKey to refresh window
-        cv2.waitKey(1)
+        """Update monitoring windows using ImageMonitor"""
+        self.image_monitor.update_image_monitoring(images_list)
     
     def close_monitoring_windows(self):
-        """Close all monitoring windows"""
-        if self.image_monitoring and self.monitor_windows_created:
-            cv2.destroyAllWindows()
-            print("Closed image monitoring windows")
+        """Close monitoring windows using ImageMonitor"""
+        self.image_monitor.close_monitoring_windows()
+    
+    def is_dishwasher_closed(self) -> bool:
+        """
+        Check if the dishwasher is closed (door closed and trays pushed in).
+        
+        Returns:
+            True if dishwasher is fully closed, False otherwise
+        """
+        try:
+            # Get current state: [door, bottom_tray, middle_tray]
+            # 0 = closed/pushed in, 1 = open/pulled out
+            dishwasher_state = self.env.unwrapped.dishwasher.get_state()
+            
+            # Success condition: all joints should be at 0 (tolerance of 0.05)
+            TOLERANCE = 0.05
+            is_closed = np.allclose(dishwasher_state, 0, atol=TOLERANCE)
+            
+            return is_closed
+        except Exception as e:
+            print(f"Error checking dishwasher state: {e}")
+            return False
+    
+    def get_dishwasher_state_details(self) -> dict:
+        """
+        Get detailed dishwasher state for debugging.
+        
+        Returns:
+            Dictionary with door, bottom_tray, middle_tray states and closure status
+        """
+        try:
+            state = self.env.unwrapped.dishwasher.get_state()
+            return {
+                'door': state[0],           # 0 = closed, 1 = open
+                'bottom_tray': state[1],    # 0 = pushed in, 1 = pulled out  
+                'middle_tray': state[2],    # 0 = pushed in, 1 = pulled out
+                'is_closed': self.is_dishwasher_closed(),
+                'raw_state': state,
+                'completion_percentage': max(0, 100 * (3 - np.sum(state)) / 3)  # 0-100% completion
+            }
+        except Exception as e:
+            print(f"Error getting dishwasher state: {e}")
+            return {'error': str(e)}
+    
+    def check_task_completion(self, step: int) -> bool:
+        """
+        Check if dishwasher closing task is completed and print progress.
+        
+        Args:
+            step: Current step number for logging
+            
+        Returns:
+            True if task is completed, False otherwise
+        """
+        state_details = self.get_dishwasher_state_details()
+        
+        if 'error' in state_details:
+            return False
+            
+        is_completed = state_details['is_closed']
+        
+        # Log progress every 50 steps or when completed
+        if step % 50 == 0 or is_completed:
+            print(f"\n=== TASK PROGRESS [Step {step}] ===")
+            print(f"Door: {state_details['door']:.3f} (target: 0.0)")
+            print(f"Bottom Tray: {state_details['bottom_tray']:.3f} (target: 0.0)") 
+            print(f"Middle Tray: {state_details['middle_tray']:.3f} (target: 0.0)")
+            print(f"Completion: {state_details['completion_percentage']:.1f}%")
+            print(f"Task Status: {'✅ COMPLETED' if is_completed else '🔄 IN PROGRESS'}")
+            print("=" * 40)
+            
+        return is_completed
+    
+    def get_recent_predictions_for_aggregation(self):
+        """
+        Get recent predictions for temporal aggregation using sliding window.
+        Returns only the most recent TEMPORAL_WINDOW_SIZE predictions.
+        """
+        if len(self.action_buffer) == 0:
+            return []
+        
+        # Get only the most recent predictions (sliding window)
+        all_predictions = list(self.action_buffer)  # oldest -> newest
+        window_predictions = all_predictions[-TEMPORAL_WINDOW_SIZE:]  # last N predictions
+        
+        return window_predictions
     
     def execute_action(self, action, dt):
         """Execute predicted action using delta movement accumulation + IK (matching data collection)"""
@@ -602,7 +620,10 @@ class ACTInference:
         # Update target positions with DELTA movements (matching data collection scaling)
         # X,Y: continuous joystick movements (* 0.0003 in data collection)
         # Z: discrete button presses (±0.03 in data collection) 
-        action*=1.01
+
+        self.Z_GAIN = 4
+        action[2] = self.Z_GAIN * action[2]
+        action[9] = self.Z_GAIN * action[9]
 
         self.target_l[0] += action[0]  # += means accumulating (key difference!)
         self.target_l[1] += action[1]
@@ -633,8 +654,18 @@ class ACTInference:
         self.targets_updated = True
     
     def run_inference(self, max_timesteps=1000):
-        """Run inference loop with IK solving (matching data collection)"""
+        """
+        Run inference loop with IK solving (matching data collection)
+        
+        Returns:
+            dict: Inference results with success status, completion step, and statistics
+        """
         print("Starting inference...")
+        
+        # Initialize result tracking
+        start_time = time.time()
+        success = False
+        completion_step = None
         
         try:
             with mujoco.viewer.launch_passive(
@@ -682,7 +713,7 @@ class ACTInference:
                     
                     # Query policy every N steps (temporal aggregation starts here)
                     if (self.num_loop_iters % POLICY_QUERY_INTERVAL == 0):
-                        print(f"\n--- POLICY QUERY at loop {self.num_loop_iters}, timestep {self.current_timestep} ---")
+                        print(f"\n--- POLICY QUERY at loop {self.num_loop_iters} ---")
                         
                         next_actions = self.select_action(self.policy, None)
                         raw_action = next_actions.squeeze(0).detach().cpu().numpy()
@@ -695,48 +726,44 @@ class ACTInference:
                             print("🔄 ACTIVATING TEMPORAL AGGREGATION")
                             temporal_agg_active = True
                             
-                        # Store actions in buffers
+                        # Store all new predictions in single buffer (auto-removes oldest when at capacity)
                         for i, action_pred in enumerate(actions):
-                            if self.current_timestep + i < len(self.action_buffers):
-                                self.action_buffers[self.current_timestep + i].append(action_pred)
-                                if i < 3:  # Only show first 3 to avoid spam
-                                    print(f"  -> Stored prediction {i} for timestep {self.current_timestep + i} (now has {len(self.action_buffers[self.current_timestep + i])} predictions)")
-                            else:
-                                if i < 3:  # Only warn for first few
-                                    print(f"  -> Warning: Prediction {i} for timestep {self.current_timestep + i} beyond buffer range")
+                            self.action_buffer.append(action_pred)  # Simple append - deque handles size limit
+                            if i < 3:  # Only show first 3 to avoid spam
+                                print(f"  -> Added prediction {i} to buffer (buffer size: {len(self.action_buffer)})")
                         
-                        # Now use temporal aggregation for current timestep
-                        if temporal_agg_active and self.current_timestep < len(self.action_buffers):
-                            current_action_buffer = self.action_buffers[self.current_timestep]
+                        # Use temporal aggregation with all recent predictions
+                        if temporal_agg_active:
+                            recent_predictions = self.get_recent_predictions_for_aggregation()
                             
-                            if len(current_action_buffer) > 1:  # Only aggregate if multiple predictions
-                                print(f"📊 TEMPORAL AGGREGATION: {len(current_action_buffer)} predictions for timestep {self.current_timestep}")
+                            if len(recent_predictions) > 1:  # Only aggregate if multiple predictions
+                                print(f"📊 TEMPORAL AGGREGATION: {len(recent_predictions)}/{TEMPORAL_WINDOW_SIZE} recent predictions (window), part of the predictions:")
                                 
                                 # Exponential weighting (newer predictions get higher weight)
                                 w_i = lambda i: np.exp(self.temporal_agg_m * i)
                                 
-                                # Show individual predictions with weights
-                                for j, pred in enumerate(current_action_buffer):
+                                # Show individual predictions with weights (limit to last 5 for readability)
+                                show_count = min(5, len(recent_predictions))
+                                start_idx = len(recent_predictions) - show_count
+                                for j in range(start_idx, len(recent_predictions)):
                                     weight = w_i(j)
-                                    age_label = "oldest" if j == 0 else ("newest" if j == len(current_action_buffer) - 1 else f"age_{j}")
-                                    print(f"  Prediction {j} ({age_label}): {pred[:3]} (xyz), weight: {weight:.3f}")
+                                    age_label = "oldest" if j == 0 else ("newest" if j == len(recent_predictions) - 1 else f"age_{j}")
+                                    print(f"  Prediction {j} ({age_label}): {recent_predictions[j][:3]} (xyz), weight: {weight:.3f}")
                                 
                                 # Calculate weighted aggregation
-                                weights_sum = np.sum([w_i(j) for j in range(len(current_action_buffer))])
-                                action = np.sum([w_i(j) * pred for j, pred in enumerate(current_action_buffer)], axis=0) / weights_sum
+                                weights_sum = np.sum([w_i(j) for j in range(len(recent_predictions))])
+                                action = np.sum([w_i(j) * pred for j, pred in enumerate(recent_predictions)], axis=0) / weights_sum
                                 
                                 print(f"✨ Aggregated action: {action[:4]} (first 4 dims)")
-                                print(f"   Responsiveness: Newest={w_i(len(current_action_buffer)-1):.3f}, Oldest={w_i(0):.3f}")
-                            elif len(current_action_buffer) == 1:
+                                print(f"   Responsiveness: Newest={w_i(len(recent_predictions)-1):.3f}, Oldest={w_i(0):.3f}")
+                            elif len(recent_predictions) == 1:
                                 # Only one prediction - use it directly
-                                action = current_action_buffer[0]
-                                print(f"📍 Single prediction for timestep {self.current_timestep}: {action[:4]} (no aggregation needed)")
+                                action = recent_predictions[0]
+                                print(f"📍 Single prediction in buffer: {action[:4]} (no aggregation needed)")
                             else:
-                                print(f"⚠️ No predictions for timestep {self.current_timestep}, keeping previous action")
+                                print(f"⚠️ No predictions in buffer, keeping previous action")
                         else:
                             print(f"⏸️ Temporal aggregation not active yet, keeping previous action")
-                        
-                        self.current_timestep += 1
                         print("--- END POLICY QUERY ---")
                     
                     # Execute action (updates target poses)
@@ -750,6 +777,15 @@ class ACTInference:
                     # Solve IK for both arms using helper method
                     self.solve_ik_step(sim_rate.dt)
                     
+                    # Check task completion automatically
+                    if self.check_task_completion(step):
+                        print(f"\n🎉 SUCCESS! Dishwasher closing task completed at step {step}")
+                        print("Model performance verified - task successful!")
+                        success = True
+                        completion_step = step
+                        time.sleep(5)
+                        break
+                    
                     viewer.sync()
                     sim_rate.sleep()
                     
@@ -760,8 +796,9 @@ class ACTInference:
                         
                         # Show temporal aggregation status
                         if temporal_agg_active:
-                            total_predictions = sum(len(buf) for buf in self.action_buffers)
-                            temporal_status = f"Temporal agg: ON, Total predictions: {total_predictions}"
+                            buffer_size = len(self.action_buffer)
+                            window_size = min(buffer_size, TEMPORAL_WINDOW_SIZE)
+                            temporal_status = f"Temporal agg: ON, buffer: {buffer_size}/{TEMPORAL_BUFFER_SIZE}, window: {window_size}"
                         else:
                             temporal_status = "Temporal agg: OFF (using initial action)"
                         
@@ -779,11 +816,29 @@ class ACTInference:
             # Close monitoring windows
             self.close_monitoring_windows()
             
+            # Calculate results
+            end_time = time.time()
+            duration = end_time - start_time
+            
             # Ensure step is defined even if exception occurs early
             if 'step' in locals():
+                total_steps = step
                 print(f"Inference completed. Ran for {step} steps.")
             else:
+                total_steps = 0
                 print("Inference completed. Error occurred during initialization.")
+        
+        # Return comprehensive results
+        results = {
+            'success': success,
+            'completion_step': completion_step,
+            'duration': duration,
+            'total_steps': total_steps,
+            'final_dishwasher_state': self.get_dishwasher_state_details() if hasattr(self, 'get_dishwasher_state_details') else None,
+            'completion_rate': completion_step / total_steps if completion_step and total_steps > 0 else None
+        }
+        
+        return results
 
 
 def main():
@@ -802,7 +857,17 @@ def main():
     inference = ACTInference(ckpt_path, dataset_stats_path)
     
     # Run inference - longer episode for more observation
-    inference.run_inference(max_timesteps=INFERENCE_STEP)  # Run for 500 steps (~25 seconds at 20Hz)
+    results = inference.run_inference(max_timesteps=INFERENCE_STEP)  # Run for 500 steps (~25 seconds at 20Hz)
+    
+    # Print results summary
+    print(f"\n=== INFERENCE RESULTS ===")
+    print(f"Success: {results['success']}")
+    print(f"Duration: {results['duration']:.2f}s")
+    print(f"Total steps: {results['total_steps']}")
+    if results['completion_step']:
+        print(f"Completed at step: {results['completion_step']}")
+        print(f"Completion rate: {results['completion_rate']:.1%}")
+    print(f"=========================")
 
 
 if __name__ == "__main__":

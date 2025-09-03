@@ -35,7 +35,7 @@ sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 from ds_aloha import _JOINT_NAMES, _VELOCITY_LIMITS
 
 # ===== INFERENCE CONFIGURATION PARAMETERS =====
-SIM_RATE = 200.0                    # Simulation frequency (Hz) - both model inference and arm movement frq
+SIM_RATE = 50.0                    # Simulation frequency (Hz) - both model inference and arm movement frq
 INFERENCE_STEP = 2000               # Total inference steps to run
 IK_MAX_ITERS = 20                   # Maximum IK solver iterations per step
 
@@ -116,9 +116,16 @@ class ACTInference:
         self.monitor_windows_created = False
         self.latest_images = {}  # Store latest images for monitoring
         
-        # Target pose tracking variables (matching data collection)
-        self.target_l = np.array([-0.4, 0.5, 1.1])
-        self.target_r = np.array([0.4, 0.5, 1.1])
+        # Get current end-effector positions from the scene instead of hardcoded values
+        # Forward kinematics to get current positions
+        mujoco.mj_forward(self.model, self.data)
+        
+        # Get current positions of the gripper sites
+        left_gripper_site_id = self.model.site("aloha_scene/left_gripper").id
+        right_gripper_site_id = self.model.site("aloha_scene/right_gripper").id
+        
+        self.target_l = self.data.site_xpos[left_gripper_site_id].copy()
+        self.target_r = self.data.site_xpos[right_gripper_site_id].copy()
         
         # Initialize orientations as SO3 objects
         self.rot_l = SO3.identity()
@@ -157,7 +164,7 @@ class ACTInference:
     #         else:
     #             action[a_i] = 0.0
     #     return action
-        self.Z_GAIN = 3.0
+        self.Z_GAIN = 18.0
         self._z_acc = [0.0, 0.0]          # [left, right]
         self.Z_ACC_THRESH = 0.45 * 0.03    # emit slightly before full step
 
@@ -245,11 +252,11 @@ class ACTInference:
         
         # Build velocity limits for IK
         self.full_velocity_limits = {}
-        for j in range(self.model.njnt):
-            jtype = self.model.jnt_type[j]
-            if jtype == mujoco.mjtJoint.mjJNT_HINGE or jtype == mujoco.mjtJoint.mjJNT_SLIDE:
-                jname = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_JOINT, j)
-                self.full_velocity_limits[jname] = 1e-6
+        # for j in range(self.model.njnt):
+        #     jtype = self.model.jnt_type[j]
+        #     if jtype == mujoco.mjtJoint.mjJNT_HINGE or jtype == mujoco.mjtJoint.mjJNT_SLIDE:
+        #         jname = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_JOINT, j)
+        #         self.full_velocity_limits[jname] = 1e-6
         
         for n in _JOINT_NAMES:
             self.full_velocity_limits[f"aloha_scene/left_{n}"] = _VELOCITY_LIMITS[n]
@@ -349,8 +356,11 @@ class ACTInference:
             # Drive actuators to current joint positions
             self.data.ctrl[self.left_actuator_ids] = self.data.qpos[self.left_relevant_qpos_indices]
             self.data.ctrl[self.right_actuator_ids] = self.data.qpos[self.right_relevant_qpos_indices]
-            
-            # Step simulation
+
+                        # refresh grippers each iteration (keeps them clipped and consistent)
+            self.data.ctrl[self.left_gripper_actuator_id]  = np.clip(self.data.ctrl[self.left_gripper_actuator_id],  0.02, 0.037)
+            self.data.ctrl[self.right_gripper_actuator_id] = np.clip(self.data.ctrl[self.right_gripper_actuator_id], 0.02, 0.037)
+                        # Step simulation
             mujoco.mj_step(self.model, self.data)
         
     def so3_to_matrix(self, so3_rotation: SO3) -> np.ndarray:
@@ -613,6 +623,47 @@ class ACTInference:
             cv2.destroyAllWindows()
             print("Closed image monitoring windows")
     
+    def is_dishwasher_closed(self) -> bool:
+        """
+        Check if the dishwasher is closed (door closed and trays pushed in).
+        
+        Returns:
+            True if dishwasher is fully closed, False otherwise
+        """
+        try:
+            # Get current state: [door, bottom_tray, middle_tray]
+            # 0 = closed/pushed in, 1 = open/pulled out
+            dishwasher_state = self.env.unwrapped.dishwasher.get_state()
+            
+            # Success condition: all joints should be at 0 (tolerance of 0.05)
+            TOLERANCE = 0.05
+            is_closed = np.allclose(dishwasher_state, 0, atol=TOLERANCE)
+            
+            return is_closed
+        except Exception as e:
+            print(f"Error checking dishwasher state: {e}")
+            return False
+    
+    def get_dishwasher_state_details(self) -> dict:
+        """
+        Get detailed dishwasher state for debugging.
+        
+        Returns:
+            Dictionary with door, bottom_tray, middle_tray states and closure status
+        """
+        try:
+            state = self.env.unwrapped.dishwasher.get_state()
+            return {
+                'door': state[0],           # 0 = closed, 1 = open
+                'bottom_tray': state[1],    # 0 = pushed in, 1 = pulled out  
+                'middle_tray': state[2],    # 0 = pushed in, 1 = pulled out
+                'is_closed': self.is_dishwasher_closed(),
+                'raw_state': state
+            }
+        except Exception as e:
+            print(f"Error getting dishwasher state: {e}")
+            return {'error': str(e)}
+    
     def execute_action(self, action, dt):
         """Execute predicted action using delta movement accumulation + IK (matching data collection)"""
         # Split action into components (matching ds_aloha.py action format)
@@ -708,7 +759,6 @@ class ACTInference:
                     self.execute_action(action, sim_rate.dt)
                     if step % 50 == 0:
                         print(f"  Z-values after discretization: L={action[2]:.6f}, R={action[9]:.6f}")
-
 
                     # Update IK target poses if they changed
                     if self.targets_updated:
