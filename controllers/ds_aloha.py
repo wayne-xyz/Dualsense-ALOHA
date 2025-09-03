@@ -82,9 +82,16 @@ class DSAlohaMocapControl:
         # Use BiGym's camera system instead of creating our own renderers
         # BiGym handles the camera name mapping and rendering internally
 
-        # Set initial target positions for left and right end-effectors. target is the aloha arms
-        self.target_l = np.array([-0.4, 0.5, 1.1])
-        self.target_r = np.array([0.4, 0.5, 1.1])
+        # Get current end-effector positions from the scene instead of hardcoded values
+        # Forward kinematics to get current positions
+        mujoco.mj_forward(self.model, self.data)
+        
+        # Get current positions of the gripper sites
+        left_gripper_site_id = self.model.site("aloha_scene/left_gripper").id
+        right_gripper_site_id = self.model.site("aloha_scene/right_gripper").id
+        
+        self.target_l = self.data.site_xpos[left_gripper_site_id].copy()
+        self.target_r = self.data.site_xpos[right_gripper_site_id].copy()
 
         # Initialize orientations as SO3 objects.
         self.rot_l = SO3.identity()

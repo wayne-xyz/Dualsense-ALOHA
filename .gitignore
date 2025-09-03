@@ -34,3 +34,4 @@ pip-delete-this-directory.txt
 data/
 obs_data/
 .claude/
+*.ckpt
