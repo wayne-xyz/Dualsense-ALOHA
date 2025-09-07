@@ -1,0 +1,21 @@
+ACT Inference Evaluation Results
+========================================
+Timestamp: 2025-09-03 03:10:16
+Success Rate: 20.0%
+Successful Trials: 2/10
+Average Duration: 196.1s
+Average Steps: 853
+Average Completion Step: 266
+Average Successful Duration: 65.2s
+
+Detailed Results:
+Trial 1: FAILED - 241.6s, 1000 steps
+Trial 2: FAILED - 237.8s, 1000 steps
+Trial 3: FAILED - 217.4s, 1000 steps
+Trial 4: FAILED - 218.6s, 1000 steps
+Trial 5: FAILED - 232.2s, 1000 steps
+Trial 6: FAILED - 224.0s, 1000 steps
+Trial 7: SUCCESS - 74.6s, 307 steps, completed at step 307
+Trial 8: FAILED - 230.8s, 1000 steps
+Trial 9: FAILED - 228.0s, 1000 steps
+Trial 10: SUCCESS - 55.9s, 225 steps, completed at step 225

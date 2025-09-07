@@ -35,3 +35,4 @@ data/
 obs_data/
 .claude/
 *.ckpt
+*.csv

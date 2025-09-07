@@ -16,6 +16,7 @@ import cv2
 import threading
 import sys
 import os
+import csv
 
 # Import image monitoring utilities
 from image_monitor import ImageMonitor
@@ -38,15 +39,16 @@ sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 from ds_aloha import _JOINT_NAMES, _VELOCITY_LIMITS
 
 # ===== INFERENCE CONFIGURATION PARAMETERS =====
-SIM_RATE = 200.0                    # Simulation frequency (Hz) - matching original author
+SIM_RATE = 100.0                    # Simulation frequency (Hz) - matching original author
 INFERENCE_STEP = 1000               # Total inference steps to run
-POLICY_QUERY_INTERVAL = 5          # Query policy every N steps
-IK_MAX_ITERS = 40                   # Maximum IK solver iterations per step
+POLICY_QUERY_INTERVAL = 3         # Query policy every N steps
+IK_MAX_ITERS = 20                   # Maximum IK solver iterations per step
 TEMPORAL_AGG_M = 0.1                # Temporal aggregation parameter m (smaller = faster new observation incorporation)
 TEMPORAL_BUFFER_SIZE = 100           # Fixed length for single dynamic temporal aggregation buffer  
 TEMPORAL_WINDOW_SIZE = 15            # Number of recent predictions to use for temporal aggregation
 ENABLE_IMAGE_MONITORING = False      # Enable/disable image monitoring windows
 
+Z_GAIN = 5
 
 
 
@@ -108,9 +110,9 @@ class ACTInference:
         # Initialize environment (same setup as ds_aloha.py)
         self.setup_environment()
         
-        # Simple single dynamic buffer for temporal aggregation (much cleaner!)
-        from collections import deque
-        self.action_buffer = deque(maxlen=TEMPORAL_BUFFER_SIZE)  # Single fixed-length buffer
+        # Per-timestep buckets for temporal aggregation across queries
+        # Key: timestep index (int), Value: list of action predictions for that timestep (ordered oldest->newest)
+        self.action_buckets = {}
         self.num_loop_iters = 0
         
         # Exponential weighting parameters (matching second author)
@@ -155,6 +157,88 @@ class ACTInference:
 
 
 
+
+        # ===== Inference data logging (CSV) setup =====
+        # Prepare output directory and file paths but delay opening files until run_inference
+        self._prepare_logging_paths()
+        self._last_executed_action = None
+        # Track previous targets to compute effective deltas for debugging
+        self._prev_target_l = self.target_l.copy()
+        self._prev_target_r = self.target_r.copy()
+
+    def _prepare_logging_paths(self):
+        """Prepare infer-data directory and CSV file paths with parameterized names."""
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        self.infer_dir = os.path.join(base_dir, 'infer-data')
+        os.makedirs(self.infer_dir, exist_ok=True)
+
+        timestamp = time.strftime('%Y%m%d_%H%M%S')
+        filename_suffix = f"{timestamp}_pqi{POLICY_QUERY_INTERVAL}_zg{Z_GAIN}_tw{TEMPORAL_WINDOW_SIZE}"
+
+        self.policy_csv_path = os.path.join(self.infer_dir, f"policy_preds_{filename_suffix}.csv")
+        self.exec_csv_path = os.path.join(self.infer_dir, f"executed_actions_{filename_suffix}.csv")
+
+        self._csv_initialized = False
+
+    def _init_csv_writers(self):
+        """Open CSV files and write headers."""
+        if self._csv_initialized:
+            return
+        self._policy_csv_file = open(self.policy_csv_path, 'w', newline='')
+        self._exec_csv_file = open(self.exec_csv_path, 'w', newline='')
+        self._policy_writer = csv.writer(self._policy_csv_file)
+        self._exec_writer = csv.writer(self._exec_csv_file)
+
+        policy_header = ['timestamp', 'step', 'loop_iter', 'pred_index'] + [f'a{i}' for i in range(14)]
+        exec_header = ['timestamp', 'step', 'loop_iter'] + [f'a{i}' for i in range(14)]
+        self._policy_writer.writerow(policy_header)
+        self._exec_writer.writerow(exec_header)
+        self._csv_initialized = True
+
+    def _close_csv_writers(self):
+        """Close CSV files if they were opened."""
+        if getattr(self, '_csv_initialized', False):
+            try:
+                self._policy_csv_file.flush()
+                self._exec_csv_file.flush()
+            except Exception:
+                pass
+            try:
+                self._policy_csv_file.close()
+            except Exception:
+                pass
+            try:
+                self._exec_csv_file.close()
+            except Exception:
+                pass
+            self._csv_initialized = False
+
+    def _log_policy_predictions(self, actions: np.ndarray, step: int, loop_iter: int):
+        """Log each policy-predicted action (post-processed) as a row in the policy CSV."""
+        if not getattr(self, '_csv_initialized', False):
+            return
+        tstr = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())
+        # actions expected shape: (num_preds, 14)
+        try:
+            for i, a in enumerate(actions):
+                row = [tstr, step, loop_iter, i] + [float(x) for x in a.tolist()]
+                self._policy_writer.writerow(row)
+            self._policy_csv_file.flush()
+        except Exception:
+            # Fail safe: do not crash inference due to logging
+            pass
+
+    def _log_executed_action(self, action: np.ndarray, step: int, loop_iter: int):
+        """Log the actually executed action (after scaling/clipping) for each sim step."""
+        if not getattr(self, '_csv_initialized', False):
+            return
+        tstr = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())
+        try:
+            row = [tstr, step, loop_iter] + [float(x) for x in action.tolist()]
+            self._exec_writer.writerow(row)
+            self._exec_csv_file.flush()
+        except Exception:
+            pass
 
 
     def setup_environment(self):
@@ -621,9 +705,9 @@ class ACTInference:
         # X,Y: continuous joystick movements (* 0.0003 in data collection)
         # Z: discrete button presses (±0.03 in data collection) 
 
-        self.Z_GAIN = 4
-        action[2] = self.Z_GAIN * action[2]
-        action[9] = self.Z_GAIN * action[9]
+
+        action[2] = Z_GAIN * action[2]
+        action[9] = Z_GAIN * action[9]
 
         self.target_l[0] += action[0]  # += means accumulating (key difference!)
         self.target_l[1] += action[1]
@@ -651,6 +735,12 @@ class ACTInference:
         self.data.ctrl[self.left_gripper_actuator_id] = left_gripper_clipped
         self.data.ctrl[self.right_gripper_actuator_id] = right_gripper_clipped
         
+        # Store the actually executed action values (after Z scaling and gripper clipping)
+        executed_action = action.copy()
+        executed_action[6] = left_gripper_clipped
+        executed_action[13] = right_gripper_clipped
+        self._last_executed_action = executed_action
+
         self.targets_updated = True
     
     def run_inference(self, max_timesteps=1000):
@@ -666,6 +756,9 @@ class ACTInference:
         start_time = time.time()
         success = False
         completion_step = None
+
+        # Initialize CSV writers
+        self._init_csv_writers()
         
         try:
             with mujoco.viewer.launch_passive(
@@ -686,22 +779,40 @@ class ACTInference:
                 # Create image monitoring windows
                 self.create_monitoring_windows()
                 
-                # Simple initial setup - no temporal aggregation yet
+                # Simple setup
                 post_process = lambda a: a * self.action_std.cpu().numpy() + self.action_mean.cpu().numpy()
                 
-                # Get first action directly (no buffering initially)
+                # Initial policy query and seed buckets for steps [0 .. chunk-1]
                 print("=== INITIAL POLICY QUERY ===")
                 next_actions = self.select_action(self.policy, None)
                 raw_action = next_actions.squeeze(0).detach().cpu().numpy()
                 actions = post_process(raw_action)
-                
-                # Use first action directly - no temporal aggregation yet
-                action = actions[0]  # Just use the first action directly
-                
+
+                # Log initial policy predictions
+                self._log_policy_predictions(actions, step=0, loop_iter=self.num_loop_iters)
+
+                # Place predictions into per-timestep buckets
+                for i, a_pred in enumerate(actions):
+                    bucket_ts = 0 + i
+                    if bucket_ts not in self.action_buckets:
+                        self.action_buckets[bucket_ts] = []
+                    self.action_buckets[bucket_ts].append(a_pred)
+
+                # Aggregate for current timestep 0
+                def aggregate_bucket(pred_list):
+                    if len(pred_list) == 1:
+                        return pred_list[0]
+                    # Use last up to TEMPORAL_WINDOW_SIZE predictions with exponential weighting (newest higher)
+                    preds = pred_list[-TEMPORAL_WINDOW_SIZE:]
+                    w_i = lambda i: np.exp(self.temporal_agg_m * i)
+                    weights = np.array([w_i(i) for i in range(len(preds))])
+                    weights = weights / np.sum(weights)
+                    return np.sum([w * p for w, p in zip(weights, preds)], axis=0)
+
+                action = aggregate_bucket(self.action_buckets.get(0, [actions[0]]))
+
                 print(f"Initial policy query returned {len(actions)} actions (chunk size: {len(actions)})")
-                print(f"Using first action directly: {action[:4]} (first 4 dims)")
-                print(f"Timing: {SIM_RATE}Hz sim, policy every {POLICY_QUERY_INTERVAL} steps ({POLICY_QUERY_INTERVAL/SIM_RATE*1000:.0f}ms)")
-                print(f"Temporal aggregation will activate after first periodic query\n")
+                print(f"Timing: {SIM_RATE}Hz sim, policy every {POLICY_QUERY_INTERVAL} steps ({POLICY_QUERY_INTERVAL/SIM_RATE*1000:.0f}ms)\n")
                 
                 # Flag to track when temporal aggregation starts
                 temporal_agg_active = False
@@ -711,7 +822,7 @@ class ACTInference:
                 while viewer.is_running() and step < max_timesteps:
                     self.num_loop_iters += 1
                     
-                    # Query policy every N steps (temporal aggregation starts here)
+                    # Query policy every N steps and append to per-timestep buckets
                     if (self.num_loop_iters % POLICY_QUERY_INTERVAL == 0):
                         print(f"\n--- POLICY QUERY at loop {self.num_loop_iters} ---")
                         
@@ -720,54 +831,53 @@ class ACTInference:
                         actions = post_process(raw_action)
                         
                         print(f"New policy query returned {len(actions)} actions")
+
+                        # Log policy predictions for this query
+                        self._log_policy_predictions(actions, step=step, loop_iter=self.num_loop_iters)
                         
                         if not temporal_agg_active:
-                            # First periodic query - activate temporal aggregation
                             print("🔄 ACTIVATING TEMPORAL AGGREGATION")
                             temporal_agg_active = True
-                            
-                        # Store all new predictions in single buffer (auto-removes oldest when at capacity)
-                        for i, action_pred in enumerate(actions):
-                            self.action_buffer.append(action_pred)  # Simple append - deque handles size limit
-                            if i < 3:  # Only show first 3 to avoid spam
-                                print(f"  -> Added prediction {i} to buffer (buffer size: {len(self.action_buffer)})")
-                        
-                        # Use temporal aggregation with all recent predictions
-                        if temporal_agg_active:
-                            recent_predictions = self.get_recent_predictions_for_aggregation()
-                            
-                            if len(recent_predictions) > 1:  # Only aggregate if multiple predictions
-                                print(f"📊 TEMPORAL AGGREGATION: {len(recent_predictions)}/{TEMPORAL_WINDOW_SIZE} recent predictions (window), part of the predictions:")
-                                
-                                # Exponential weighting (newer predictions get higher weight)
-                                w_i = lambda i: np.exp(self.temporal_agg_m * i)
-                                
-                                # Show individual predictions with weights (limit to last 5 for readability)
-                                show_count = min(5, len(recent_predictions))
-                                start_idx = len(recent_predictions) - show_count
-                                for j in range(start_idx, len(recent_predictions)):
-                                    weight = w_i(j)
-                                    age_label = "oldest" if j == 0 else ("newest" if j == len(recent_predictions) - 1 else f"age_{j}")
-                                    print(f"  Prediction {j} ({age_label}): {recent_predictions[j][:3]} (xyz), weight: {weight:.3f}")
-                                
-                                # Calculate weighted aggregation
-                                weights_sum = np.sum([w_i(j) for j in range(len(recent_predictions))])
-                                action = np.sum([w_i(j) * pred for j, pred in enumerate(recent_predictions)], axis=0) / weights_sum
-                                
-                                print(f"✨ Aggregated action: {action[:4]} (first 4 dims)")
-                                print(f"   Responsiveness: Newest={w_i(len(recent_predictions)-1):.3f}, Oldest={w_i(0):.3f}")
-                            elif len(recent_predictions) == 1:
-                                # Only one prediction - use it directly
-                                action = recent_predictions[0]
-                                print(f"📍 Single prediction in buffer: {action[:4]} (no aggregation needed)")
-                            else:
-                                print(f"⚠️ No predictions in buffer, keeping previous action")
+
+                        # Place predictions into per-timestep buckets for [step .. step+len(actions)-1]
+                        for i, a_pred in enumerate(actions):
+                            bucket_ts = step + i
+                            if bucket_ts not in self.action_buckets:
+                                self.action_buckets[bucket_ts] = []
+                            self.action_buckets[bucket_ts].append(a_pred)
+                        # One-line debug: bucket count and weights (newest->oldest)
+                        current_bucket_count = len(self.action_buckets.get(step, []))
+                        weights_len = min(current_bucket_count, TEMPORAL_WINDOW_SIZE)
+                        if weights_len > 0:
+                            w = np.array([np.exp(self.temporal_agg_m * i) for i in range(weights_len)])
+                            w = w / np.sum(w)
+                            w_newest_first = w[::-1]
+                            w_str = ','.join(f'{x:.3f}' for x in w_newest_first)
+                            print(f"ts={step} bucket={current_bucket_count} weights(new->old)=[{w_str}]")
                         else:
-                            print(f"⏸️ Temporal aggregation not active yet, keeping previous action")
+                            print(f"ts={step} bucket={current_bucket_count} weights(new->old)=[]")
                         print("--- END POLICY QUERY ---")
                     
+                    # Compute action for current timestep from its bucket
+                    bucket = self.action_buckets.get(step, [])
+                    if len(bucket) == 0:
+                        # No predictions yet for this step; keep previous action
+                        pass
+                    elif len(bucket) == 1:
+                        action = bucket[0]
+                    else:
+                        preds = bucket[-TEMPORAL_WINDOW_SIZE:]
+                        w_i = lambda i: np.exp(self.temporal_agg_m * i)
+                        weights = np.array([w_i(i) for i in range(len(preds))])
+                        weights = weights / np.sum(weights)
+                        action = np.sum([w * p for w, p in zip(weights, preds)], axis=0)
+
                     # Execute action (updates target poses)
                     self.execute_action(action, sim_rate.dt)
+
+                    # Log the actually executed action after scaling/clipping in execute_action
+                    executed = self._last_executed_action if self._last_executed_action is not None else action
+                    self._log_executed_action(executed, step=step, loop_iter=self.num_loop_iters)
                     
                     # Update IK target poses if they changed
                     if self.targets_updated:
@@ -789,23 +899,43 @@ class ACTInference:
                     viewer.sync()
                     sim_rate.sleep()
                     
+                    # Compute effective target deltas for debugging
+                    eff_delta_l = self.target_l - self._prev_target_l
+                    eff_delta_r = self.target_r - self._prev_target_r
+
                     # Print status 
                     if step % 50 == 0:
                         action_str = f"{action[0]:.4f}, {action[1]:.4f}, {action[2]:.4f}"
-                        target_str = ', '.join(f'{x:.3f}' for x in self.target_l[:3])
-                        
-                        # Show temporal aggregation status
+                        target_l_str = ', '.join(f'{x:.3f}' for x in self.target_l[:3])
+                        target_r_str = ', '.join(f'{x:.3f}' for x in self.target_r[:3])
+                        delta_l_str = ', '.join(f'{x:.5f}' for x in eff_delta_l[:3])
+                        delta_r_str = ', '.join(f'{x:.5f}' for x in eff_delta_r[:3])
+
+                        # Show temporal aggregation status (bucket-based)
                         if temporal_agg_active:
-                            buffer_size = len(self.action_buffer)
-                            window_size = min(buffer_size, TEMPORAL_WINDOW_SIZE)
-                            temporal_status = f"Temporal agg: ON, buffer: {buffer_size}/{TEMPORAL_BUFFER_SIZE}, window: {window_size}"
+                            bucket_size = len(self.action_buckets.get(step, []))
+                            window_size = min(bucket_size, TEMPORAL_WINDOW_SIZE)
+                            temporal_status = f"Temporal agg: ON, bucket(ts={step}) size: {bucket_size}, window: {window_size}"
                         else:
                             temporal_status = "Temporal agg: OFF (using initial action)"
-                        
-                        print(f"Step {step}: Action=[{action_str}], Target_L=[{target_str}]")
+
+                        # Clip flags: whether targets are at bounds
+                        l_clip = [self.target_l[0] == self.x_min or self.target_l[0] == self.x_max,
+                                  self.target_l[1] == self.y_min or self.target_l[1] == self.y_max,
+                                  self.target_l[2] == self.z_min or self.target_l[2] == self.z_max]
+                        r_clip = [self.target_r[0] == self.x_min or self.target_r[0] == self.x_max,
+                                  self.target_r[1] == self.y_min or self.target_r[1] == self.y_max,
+                                  self.target_r[2] == self.z_min or self.target_r[2] == self.z_max]
+
+                        print(f"Step {step}: Action=[{action_str}]")
+                        print(f"  Target_L=[{target_l_str}]  ΔL=[{delta_l_str}]  clipL={l_clip}")
+                        print(f"  Target_R=[{target_r_str}]  ΔR=[{delta_r_str}]  clipR={r_clip}")
                         print(f"  {temporal_status}, Loop: {self.num_loop_iters}")
                     
                     step += 1
+                    # Update previous targets after each iteration
+                    self._prev_target_l = self.target_l.copy()
+                    self._prev_target_r = self.target_r.copy()
                     
                     # Keep using the same action until next policy query
                     # (action is updated only during periodic policy queries)
@@ -815,6 +945,8 @@ class ACTInference:
         finally:
             # Close monitoring windows
             self.close_monitoring_windows()
+            # Close CSV writers
+            self._close_csv_writers()
             
             # Calculate results
             end_time = time.time()
@@ -845,7 +977,7 @@ def main():
     """Main function to run ACT inference"""
     # Paths
     ckpt_path = "policy_best.ckpt"
-    dataset_stats_path = "dataset_stats2.pkl"  # Will be created when you run training
+    dataset_stats_path = "dataset_stats.pkl"  # Will be created when you run training
     
     # Check if checkpoint exists
     if not os.path.exists(ckpt_path):

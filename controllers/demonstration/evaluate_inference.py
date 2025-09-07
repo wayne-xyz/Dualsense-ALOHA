@@ -13,7 +13,7 @@ def run_evaluation_trials(num_trials=10):
     """Run multiple trials and track success rates"""
     # Paths
     ckpt_path = "policy_best.ckpt"
-    dataset_stats_path = "dataset_stats2.pkl"
+    dataset_stats_path = "dataset_stats.pkl"
     
     # Check if checkpoint exists
     if not os.path.exists(ckpt_path):

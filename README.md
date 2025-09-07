@@ -32,6 +32,12 @@ Model inference entry point: [controllers/demonstration/run_inference_temporalAg
 
 ### Comparesion Learning : 
 
+Original ACT model not differ the two arms , the real action of two arms are indenpentely , but the model inferece will make one arm disfuncitonal . the model will treat the all the acitons as one body's instead of two. 
+
+ACT model skip issue, some critical movement will be skip in the act . (low steps 100 in the data )
+
+discrtae data type will be dislute int the model training one action in this case is not continualy data , since that using the temporal aggregaiton for the inference . 
+
 
 
 
@@ -51,6 +57,11 @@ Model inference entry point: [controllers/demonstration/run_inference_temporalAg
 #### Action Data Issues
 - **Inconsistency in actions:**  
   - Actions at indices `[2]` and `[9]` are based on a button press with values `(0.03, 0, -0.03)`.  
+
+#### Actions Distribution
+
+![Actions Distribution](controllers/demo/actions%20distribution.png)
+
   - The ACT model converts these discrete values into continuous data, which weakens action performance.  
 
 #### Inference Phase
