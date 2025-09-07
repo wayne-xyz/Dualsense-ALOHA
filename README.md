@@ -31,12 +31,14 @@ Model inference entry point: [controllers/demonstration/run_inference_temporalAg
 
 
 ### Comparesion Learning : 
+Original ACT Model  
+Success Rate
 
-Original ACT model not differ the two arms , the real action of two arms are indenpentely , but the model inferece will make one arm disfuncitonal . the model will treat the all the acitons as one body's instead of two. 
+The original ACT model does not distinguish between the two arms. In reality, the actions of the two arms are independent, but the model's inference often causes one arm to become non-functional. This is because the model treats all actions as if they belong to a single body, rather than two separate arms.
 
-ACT model skip issue, some critical movement will be skip in the act . (low steps 100 in the data )
+There is also an issue with the ACT model skipping some critical movements. Due to the low number of steps (100) in the data, some important actions may be omitted during inference.
 
-discrtae data type will be dislute int the model training one action in this case is not continualy data , since that using the temporal aggregaiton for the inference . 
+Additionally, discrete data types are diluted during model training. In this case, some actions are not continuous, but the model treats them as such. This is why temporal aggregation is used during inference to help address this issue.
 
 
 
