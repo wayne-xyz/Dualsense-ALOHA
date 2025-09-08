@@ -41,14 +41,15 @@ from ds_aloha import _JOINT_NAMES, _VELOCITY_LIMITS
 # ===== INFERENCE CONFIGURATION PARAMETERS =====
 SIM_RATE = 100.0                    # Simulation frequency (Hz) - matching original author
 INFERENCE_STEP = 1000               # Total inference steps to run
-POLICY_QUERY_INTERVAL = 3         # Query policy every N steps
+POLICY_QUERY_INTERVAL = 5         # Query policy every N steps
 IK_MAX_ITERS = 20                   # Maximum IK solver iterations per step
 TEMPORAL_AGG_M = 0.1                # Temporal aggregation parameter m (smaller = faster new observation incorporation)
 TEMPORAL_BUFFER_SIZE = 100           # Fixed length for single dynamic temporal aggregation buffer  
 TEMPORAL_WINDOW_SIZE = 15            # Number of recent predictions to use for temporal aggregation
 ENABLE_IMAGE_MONITORING = False      # Enable/disable image monitoring windows
 
-Z_GAIN = 5
+Z_GAIN = 20
+ACTION_SCALE =1.5
 
 
 
@@ -706,8 +707,6 @@ class ACTInference:
         # Z: discrete button presses (±0.03 in data collection) 
 
 
-        action[2] = Z_GAIN * action[2]
-        action[9] = Z_GAIN * action[9]
 
         self.target_l[0] += action[0]  # += means accumulating (key difference!)
         self.target_l[1] += action[1]
@@ -729,17 +728,17 @@ class ACTInference:
         # self.update_rotation('y', action[11], 'right')
         # self.update_rotation('z', action[12], 'right')
         
-        # Update gripper positions
-        left_gripper_clipped = np.clip(action[6], 0.02, 0.037)
-        right_gripper_clipped = np.clip(action[13], 0.02, 0.037)
-        self.data.ctrl[self.left_gripper_actuator_id] = left_gripper_clipped
-        self.data.ctrl[self.right_gripper_actuator_id] = right_gripper_clipped
+        # # Update gripper positions
+        # left_gripper_clipped = np.clip(action[6], 0.02, 0.037)
+        # right_gripper_clipped = np.clip(action[13], 0.02, 0.037)
+        # self.data.ctrl[self.left_gripper_actuator_id] = left_gripper_clipped
+        # self.data.ctrl[self.right_gripper_actuator_id] = right_gripper_clipped
         
-        # Store the actually executed action values (after Z scaling and gripper clipping)
-        executed_action = action.copy()
-        executed_action[6] = left_gripper_clipped
-        executed_action[13] = right_gripper_clipped
-        self._last_executed_action = executed_action
+        # # Store the actually executed action values (after Z scaling and gripper clipping)
+        # executed_action = action.copy()
+        # executed_action[6] = left_gripper_clipped
+        # executed_action[13] = right_gripper_clipped
+        # self._last_executed_action = executed_action
 
         self.targets_updated = True
     
@@ -871,6 +870,13 @@ class ACTInference:
                         weights = np.array([w_i(i) for i in range(len(preds))])
                         weights = weights / np.sum(weights)
                         action = np.sum([w * p for w, p in zip(weights, preds)], axis=0)
+
+
+                    # save the actions to csv after the scale and z gain        
+                    action=action*ACTION_SCALE
+                    if action[1]<0:action[1]=action[1]*1.5
+                    action[2] = Z_GAIN * action[2] 
+                    action[9] = Z_GAIN * action[9]     
 
                     # Execute action (updates target poses)
                     self.execute_action(action, sim_rate.dt)

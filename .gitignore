@@ -36,3 +36,5 @@ obs_data/
 .claude/
 *.ckpt
 *.csv
+data_continuous_mixup14_masked/
+controllers/demonstration/*.txt

@@ -32,20 +32,22 @@ Model inference entry point: [controllers/demonstration/run_inference_temporalAg
 
 ### Comparesion Learning : 
 Original ACT Model  
-Success Rate
 
+- One Arm disfuction
 The original ACT model does not distinguish between the two arms. In reality, the actions of the two arms are independent, but the model's inference often causes one arm to become non-functional. This is because the model treats all actions as if they belong to a single body, rather than two separate arms.
 
+- Skip steps
 There is also an issue with the ACT model skipping some critical movements. Due to the low number of steps (100) in the data, some important actions may be omitted during inference.
 
-Additionally, discrete data types are diluted during model training. In this case, some actions are not continuous, but the model treats them as such. This is why temporal aggregation is used during inference to help address this issue.
+- Discrete data
+Additionally, discrete data types are diluted during model training. In this case, some actions are not continuous, but the model treats them as such. This is why temporal aggregation is used during inference to help address this issue. And multiplication for agument the z-axis action
 
 
 
 
 
 #### Training Results
-- **One-pattern imitation learning success rate:** ~10%
+- Original ACT Model succes rate 70%
 
 #### Data Collection
 - Each dataset follows the same movement pattern, repeating similar sequences of actions.  

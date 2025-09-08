@@ -791,8 +791,8 @@ class ACTInference:
 def main():
     """Main function to run ACT inference"""
     # Paths
-    ckpt_path = "policy_best.ckpt"
-    dataset_stats_path = "dataset_stats.pkl"  # Will be created when you run training
+    ckpt_path = "policy_best_3.ckpt"
+    dataset_stats_path = "dataset_stats_3.pkl"  # Will be created when you run training
     
     # Check if checkpoint exists
     if not os.path.exists(ckpt_path):
