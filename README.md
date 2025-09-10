@@ -1,5 +1,5 @@
 # Dualsense-ALOHA
-Dualsense™ Controller Teleoperation and ACT autonomy IL on ALOHA for Bigym benchmark tasks 
+Dualsense™ Controller Teleoperation and ACT autonomy IL on ALOHA for one Bigym benchmark task
 
 - Insipred by the [Nitendo-Aloha](https://github.com/AlmondGod/Nintendo-Aloha)
 - Reproduce the implementation and concept of Nintendo-Aloha and replace the controller to be compatible with Dualsense™ Controller
@@ -14,64 +14,33 @@ Dualsense™ Controller Teleoperation and ACT autonomy IL on ALOHA for Bigym ben
 
 
 ## Data collection Teleoprate based on Dualsense controller: 
+Teleoperation, refer to the [ds_aloha.py](controllers/demonstration/ds_aloha.py) script,based on [pydualsense](https://github.com/flok/pydualsense) library.
+
 ![Dishwasher Close Task GIF](controllers/demo/closerdishwasher2.gif)
 
-![Dishwasher Close Task GIF](controllers/demo/closerdishwasher1.gif)
-
-## Inference Demonstrate:
 
 
-
-### ACT MODEL Train and Inference
-
+## Inference :
 [Model training repository](https://github.com/wayne-xyz/act-bigym-aloha-dualsense)
 
 Model inference entry point: [controllers/demonstration/run_inference_temporalAgg.py](controllers/demonstration/run_inference_temporalAgg.py)
 
 
+
+
 ## MuJoCo Warp Accelerator
-8.654 ms  for each mujoco step
 
 
-### Comparesion Learning : 
-Original ACT Model  
+## Reflections
 
-- One Arm disfuction
-The original ACT model does not distinguish between the two arms. In reality, the actions of the two arms are independent, but the model's inference often causes one arm to become non-functional. This is because the model treats all actions as if they belong to a single body, rather than two separate arms.
+### 1. Action Attenuation
+After ACT model training, action outputs are often weaker than intended, leading to less accurate positioning (though movement direction is usually correct). This is likely due to most collected actions being near zero. To compensate, we apply a scaling factor to the inferred actions so the robot arm moves sufficiently. Comparing action distributions between the dataset and policy outputs is recommended.
 
-- Skip steps
-There is also an issue with the ACT model skipping some critical movements. Due to the low number of steps (100) in the data, some important actions may be omitted during inference.
+### 2. Discrete Action Handling
+Binary controller actions (e.g., action2, action9) can become diluted during training. To address this, we use MixUp interpolation to convert discrete actions into smoother, continuous values, improving model learning and inference.
 
-- Discrete data
-Additionally, discrete data types are diluted during model training. In this case, some actions are not continuous, but the model treats them as such. This is why temporal aggregation is used during inference to help address this issue. And multiplication for agument the z-axis action
+### 3. MuJoCo Warp Suitability
+MuJoCo Warp is optimized for fast, headless multi-world simulations and is not ideal for single-world, visualized policy inference.
 
-
-
-
-
-#### Training Results
-- Original ACT Model succes rate 70%
-
-#### Data Collection
-- Each dataset follows the same movement pattern, repeating similar sequences of actions.  
-  Example chain of movements:
-  1. Move to the front of the door  
-  2. Lower the arm  
-  3. Move under the door  
-  4. Door rotates to close  
-  5. Left arm moves from down to up  
-
-#### Action Data Issues
-- **Inconsistency in actions:**  
-  - Actions at indices `[2]` and `[9]` are based on a button press with values `(0.03, 0, -0.03)`.  
-
-#### Actions Distribution
-
-![Actions Distribution](controllers/demo/actions%20distribution.png)
-
-  - The ACT model converts these discrete values into continuous data, which weakens action performance.  
-
-#### Inference Phase
-- To improve inference, augmentation methods are applied, such as:  
-  - **Weighted accumulation** based on a buffer  
-  - **Multiplying by variables** to adjust and stabilize outputs  for the action[2] and [9]
+### 4. Others
+Model training throug colab by A100 about 2s per it.  vs my RTX3060 17s per it. 
