@@ -29,6 +29,9 @@ Dualsense™ Controller Teleoperation and ACT autonomy IL on ALOHA for Bigym ben
 Model inference entry point: [controllers/demonstration/run_inference_temporalAgg.py](controllers/demonstration/run_inference_temporalAgg.py)
 
 
+## MuJoCo Warp Accelerator
+8.654 ms  for each mujoco step
+
 
 ### Comparesion Learning : 
 Original ACT Model  

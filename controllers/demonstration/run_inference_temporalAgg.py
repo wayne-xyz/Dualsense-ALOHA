@@ -2,6 +2,7 @@
 """
 ACT Model Inference Script for ALOHA Robot
 Runs trained ACT policy to perform imitation learning inference
+Support the mujoco warp engine ( need to install warp and mujoco warp and upgrade the bigym to mujoco 3.3.6)
 """
 
 import numpy as np
@@ -12,11 +13,13 @@ import mujoco
 import mujoco.viewer
 import mink
 from einops import rearrange
-import cv2
-import threading
 import sys
 import os
 import csv
+import enum
+import mujoco_warp as mjw
+import warp as wp
+from typing import Sequence, Union
 
 # Import image monitoring utilities
 from image_monitor import ImageMonitor
@@ -25,7 +28,6 @@ from image_monitor import ImageMonitor
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from policy import ACTPolicy
-from constants import DT
 from bigym.envs.dishwasher import DishwasherClose
 from bigym.action_modes import AlohaPositionActionMode
 from bigym.utils.observation_config import ObservationConfig, CameraConfig
@@ -39,7 +41,7 @@ sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 from ds_aloha import _JOINT_NAMES, _VELOCITY_LIMITS
 
 # ===== INFERENCE CONFIGURATION PARAMETERS =====
-SIM_RATE = 100.0                    # Simulation frequency (Hz) - matching original author
+SIM_RATE = 10000.0                    # Simulation frequency (Hz) - matching original author
 INFERENCE_STEP = 1000               # Total inference steps to run
 POLICY_QUERY_INTERVAL = 5         # Query policy every N steps
 IK_MAX_ITERS = 20                   # Maximum IK solver iterations per step
@@ -48,8 +50,14 @@ TEMPORAL_BUFFER_SIZE = 100           # Fixed length for single dynamic temporal 
 TEMPORAL_WINDOW_SIZE = 15            # Number of recent predictions to use for temporal aggregation
 ENABLE_IMAGE_MONITORING = False      # Enable/disable image monitoring windows
 
-Z_GAIN = 20
+Z_GAIN = 18
 ACTION_SCALE =1.5
+
+
+class EngineOptions(enum.IntEnum):
+  WARP = 0 # using the mujoco warp engine
+  C = 1  # using the classic mujoco
+
 
 
 
@@ -81,7 +89,11 @@ class ACTInference:
         }
 
 
+        self.engine_option = EngineOptions.C
 
+        self.avg_step_time = 0.0 # for calculation of the average step time of the warp engine
+        self._step_time_sum = 0.0
+        self._step_time_count = 0
         
         # Load trained model
         self.policy = ACTPolicy(self.policy_config)
@@ -415,7 +427,8 @@ class ACTInference:
             self.data.ctrl[self.right_actuator_ids] = self.data.qpos[self.right_relevant_qpos_indices]
             
             # Step simulation
-            mujoco.mj_step(self.model, self.data)
+            self.step_physics()
+
         
     def so3_to_matrix(self, so3_rotation: SO3) -> np.ndarray:
         """Convert an SO3 rotation object to a 3x3 rotation matrix."""
@@ -495,61 +508,10 @@ class ACTInference:
             print(f"Available keys: {list(obs.keys())}")
             return None
         
-    def get_observation(self):
-        """Get current observation (qpos and images) from environment"""
-        # Get robot state
-        l_qpos = self.data.qpos[self.left_relevant_qpos_indices] 
-        r_qpos = self.data.qpos[self.right_relevant_qpos_indices]
-        
-        # Get gripper positions (estimated from actuator controls)
-        left_gripper_pos = self.data.ctrl[self.left_gripper_actuator_id] 
-        right_gripper_pos = self.data.ctrl[self.right_gripper_actuator_id]
-        
-        # Combine into 14-dim qpos vector
-        qpos = np.concatenate((l_qpos, [left_gripper_pos], r_qpos, [right_gripper_pos]), axis=0)
-        
-        # Get images from all cameras
-        obs = self.env.get_observation()
-        curr_images = []
-        for cam_name in self.policy_config['camera_names']:
-            rgb_key = f'rgb_{cam_name}'
-            if rgb_key in obs:
-                img = obs[rgb_key]
-                
-                # BiGym returns images in (C, H, W) format, convert to (H, W, C) to match training data
-                if img.shape[0] == 3:  # (C, H, W) format from BiGym
-                    img = rearrange(img, 'c h w -> h w c')  # Convert to (H, W, C)
-                
-                # Ensure correct shape: (H, W, C) = (480, 640, 3)
-                if img.shape != (480, 640, 3):
-                    print(f"Error: Image shape {img.shape} doesn't match expected (480, 640, 3)")
-                
-                # Keep in (H, W, C) format to match training data
-                curr_images.append(img)
-            else:
-                print(f"Warning: Camera {cam_name} not found")
-                curr_images.append(np.zeros((480, 640, 3), dtype=np.uint8))
-        
-        # Stack images and convert to torch tensor
-        curr_image = np.stack(curr_images, axis=0)  # Shape: (4, 480, 640, 3) = (cameras, H, W, C)
-        curr_image = torch.from_numpy(curr_image / 255.0).float().to(self.device)
-        
-        # Convert to (batch, cameras, C, H, W) format expected by model
-        curr_image = curr_image.permute(0, 3, 1, 2)  # (4, 480, 640, 3) -> (4, 3, 480, 640)
-        curr_image = curr_image.unsqueeze(0)  # (4, 3, 480, 640) -> (1, 4, 3, 480, 640)
-        
-        return qpos, curr_image
+
     
-    def preprocess_observation(self, qpos):
-        """Preprocess qpos observation using dataset statistics"""
-        qpos_tensor = torch.from_numpy(qpos).float().to(self.device).unsqueeze(0)
-        qpos_normalized = (qpos_tensor - self.qpos_mean) / self.qpos_std
-        return qpos_normalized
+
     
-    def postprocess_action(self, action_tensor):
-        """Postprocess action from model output"""
-        action_denormalized = action_tensor * self.action_std + self.action_mean
-        return action_denormalized.squeeze(0).cpu().numpy()
     
     def select_action(self, policy, stats):
         """Select action using model (matching second author's approach)"""
@@ -682,19 +644,6 @@ class ACTInference:
             
         return is_completed
     
-    def get_recent_predictions_for_aggregation(self):
-        """
-        Get recent predictions for temporal aggregation using sliding window.
-        Returns only the most recent TEMPORAL_WINDOW_SIZE predictions.
-        """
-        if len(self.action_buffer) == 0:
-            return []
-        
-        # Get only the most recent predictions (sliding window)
-        all_predictions = list(self.action_buffer)  # oldest -> newest
-        window_predictions = all_predictions[-TEMPORAL_WINDOW_SIZE:]  # last N predictions
-        
-        return window_predictions
     
     def execute_action(self, action, dt):
         """Execute predicted action using delta movement accumulation + IK (matching data collection)"""
@@ -741,6 +690,46 @@ class ACTInference:
         # self._last_executed_action = executed_action
 
         self.targets_updated = True
+
+
+
+    def _compile_step(self, m, d):
+        print("Compiling physics step...", end="", flush=True)
+        start = time.time()
+        # capture the whole step function as a CUDA graph
+        with wp.ScopedCapture() as capture:
+            mjw.step(m, d)
+        elapsed = time.time() - start
+        print(f"done ({elapsed:0.2g}s).")
+        return capture.graph
+
+    
+    # mujoco step physics
+    def step_physics(self):
+        start = time.time()
+        if self.engine_option == EngineOptions.WARP:
+            wp.copy(self.d.ctrl, wp.array([self.data.ctrl.astype(np.float32)]))
+            wp.copy(self.d.act, wp.array([self.data.act.astype(np.float32)]))
+            wp.copy(self.d.xfrc_applied, wp.array([self.data.xfrc_applied.astype(np.float32)]))
+            wp.copy(self.d.qpos, wp.array([self.data.qpos.astype(np.float32)]))
+            wp.copy(self.d.qvel, wp.array([self.data.qvel.astype(np.float32)]))
+            wp.copy(self.d.time, wp.array([self.data.time], dtype=wp.float32))
+
+            wp.capture_launch(self.graph)
+            wp.synchronize()
+            mjw.get_data_into(self.data, self.model, self.d)
+        else:
+            mujoco.mj_step(self.model, self.data)
+        # accumulate timing for average
+        elapsed = time.time() - start
+        self._step_time_sum += elapsed
+        self._step_time_count += 1
+ 
+        
+        
+
+     
+
     
     def run_inference(self, max_timesteps=1000):
         """
@@ -758,6 +747,20 @@ class ACTInference:
 
         # Initialize CSV writers
         self._init_csv_writers()
+
+
+        # prepaer the warp
+        if self.engine_option == EngineOptions.WARP:
+            wp.init()
+            self.m=mjw.put_model(self.model)
+            self.d=mjw.put_data(self.model, self.data)
+            self.graph=self._compile_step(self.m, self.d)
+            print(f"Data\n  nworld: {self.d.nworld} nconmax: {self.d.nconmax} njmax: {self.d.njmax}\n")
+            print(f"MuJoCo Warp simulating with dt = {self.m.opt.timestep.numpy()[0]:.3f}...")
+        
+
+
+
         
         try:
             with mujoco.viewer.launch_passive(
@@ -818,6 +821,7 @@ class ACTInference:
                 
                 step = 0
                 
+                # loop step 
                 while viewer.is_running() and step < max_timesteps:
                     self.num_loop_iters += 1
                     
@@ -903,7 +907,7 @@ class ACTInference:
                         break
                     
                     viewer.sync()
-                    sim_rate.sleep()
+                    # sim_rate.sleep()
                     
                     # Compute effective target deltas for debugging
                     eff_delta_l = self.target_l - self._prev_target_l
@@ -953,6 +957,10 @@ class ACTInference:
             self.close_monitoring_windows()
             # Close CSV writers
             self._close_csv_writers()
+            # Print average physics step timing
+            if self._step_time_count > 0:
+                self.avg_step_time = self._step_time_sum / self._step_time_count if self._step_time_count > 0 else 0.0
+                print(f"Average step_physics time: {self.avg_step_time * 1000.0:.3f} ms over {self._step_time_count} calls")
             
             # Calculate results
             end_time = time.time()

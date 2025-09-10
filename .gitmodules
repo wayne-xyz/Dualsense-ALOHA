@@ -1,0 +1,3 @@
+[submodule "controllers/demonstration/extern/mujoco_warp"]
+	path = controllers/demonstration/extern/mujoco_warp
+	url = https://github.com/google-deepmind/mujoco_warp.git

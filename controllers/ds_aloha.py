@@ -8,7 +8,6 @@ def new_randint(*args, **kwargs):
 np.random.randint = new_randint
 
 import pydualsense
-import numpy as np
 import mujoco
 import mujoco.viewer
 import mink
@@ -22,8 +21,8 @@ from mink import SO3
 from mink.configuration import Configuration
 from loop_rate_limiters import RateLimiter
 import os
-from mujoco import MjModel, MjData
-import logging
+
+
 
 # Define joint names and their corresponding velocity limits.
 _JOINT_NAMES = [
