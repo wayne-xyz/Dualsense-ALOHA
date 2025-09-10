@@ -89,7 +89,8 @@ class ACTInference:
         }
 
 
-        self.engine_option = EngineOptions.C
+        self.engine_option = EngineOptions.WARP
+        self.headless=False
 
         self.avg_step_time = 0.0 # for calculation of the average step time of the warp engine
         self._step_time_sum = 0.0
@@ -706,8 +707,9 @@ class ACTInference:
     
     # mujoco step physics
     def step_physics(self):
-        start = time.time()
+ 
         if self.engine_option == EngineOptions.WARP:
+            wp_start = time.perf_counter()
             wp.copy(self.d.ctrl, wp.array([self.data.ctrl.astype(np.float32)]))
             wp.copy(self.d.act, wp.array([self.data.act.astype(np.float32)]))
             wp.copy(self.d.xfrc_applied, wp.array([self.data.xfrc_applied.astype(np.float32)]))
@@ -715,17 +717,25 @@ class ACTInference:
             wp.copy(self.d.qvel, wp.array([self.data.qvel.astype(np.float32)]))
             wp.copy(self.d.time, wp.array([self.data.time], dtype=wp.float32))
 
+
             wp.capture_launch(self.graph)
             wp.synchronize()
+
+
             mjw.get_data_into(self.data, self.model, self.d)
+            wp_elapsed = time.perf_counter() - wp_start
         else:
+            wp_start = time.perf_counter()
             mujoco.mj_step(self.model, self.data)
+            wp_elapsed = time.perf_counter() - wp_start
         # accumulate timing for average
-        elapsed = time.time() - start
-        self._step_time_sum += elapsed
+
+        self._step_time_sum += wp_elapsed
         self._step_time_count += 1
  
         
+
+
         
 
      
@@ -987,6 +997,70 @@ class ACTInference:
         return results
 
 
+    def run_inferenece_headless(self, max_timesteps=1000, nWorld=1):
+        """
+        Minimal headless run: no viewer, no sleeps, no policy, no IK.
+        Just step physics as fast as possible (Warp if available, else classic).
+        """
+        print("Starting minimal headless physics run...")
+
+        # Reset timing counters for this run
+        self._step_time_sum = 0.0
+        self._step_time_count = 0
+        self.avg_step_time = 0.0
+
+        start_time = time.time()
+
+        # Prepare Warp or classic
+        use_warp = (self.engine_option == EngineOptions.WARP)
+        if use_warp:
+            wp.init()
+            m = mjw.put_model(self.model)
+            d = mjw.put_data(self.model, self.data, nworld=nWorld if nWorld and nWorld > 0 else 1)
+            graph = self._compile_step(m, d)
+            nworld_actual = d.nworld
+            print(f"Warp data ready: nworld={nworld_actual} dt={m.opt.timestep.numpy()[0]:.3f}")
+
+        steps_done = 0
+        try:
+            if use_warp:
+                for _ in range(max_timesteps):
+                    t0 = time.perf_counter()
+                    wp.capture_launch(graph)
+                    wp.synchronize()
+                    dt = time.perf_counter() - t0
+                    self._step_time_sum += dt
+                    self._step_time_count += 1
+                    steps_done += 1
+            else:
+                for _ in range(max_timesteps):
+                    t0 = time.perf_counter()
+                    mujoco.mj_step(self.model, self.data)
+                    dt = time.perf_counter() - t0
+                    self._step_time_sum += dt
+                    self._step_time_count += 1
+                    steps_done += 1
+        except KeyboardInterrupt:
+            print("\nHeadless run interrupted by user")
+
+        # Finalize timing
+        duration = time.time() - start_time
+        if self._step_time_count > 0:
+            self.avg_step_time = self._step_time_sum / self._step_time_count
+        steps_per_sec = steps_done / duration if duration > 0 else float('inf')
+
+        print(f"Headless steps x {nWorld}worlds: {steps_done*nWorld}  avg_step/{nWorld}={self.avg_step_time/nWorld * 1000.0:.3f} ms  throughputx{nWorld}worlds={steps_per_sec*nWorld:,.0f} steps/s")
+
+        return {
+            'duration': duration,
+            'total_steps per world': steps_done,
+            'total_steps': steps_done * nWorld,
+            'avg_step_time_ms': self.avg_step_time*1000.0,
+            'steps_per_sec': steps_per_sec,
+            'engine': 'warp' if use_warp else 'classic',
+            'nworld': int(nWorld if use_warp else 1),
+        }
+
 def main():
     """Main function to run ACT inference"""
     # Paths
@@ -1003,17 +1077,22 @@ def main():
     inference = ACTInference(ckpt_path, dataset_stats_path)
     
     # Run inference - longer episode for more observation
-    results = inference.run_inference(max_timesteps=INFERENCE_STEP)  # Run for 500 steps (~25 seconds at 20Hz)
+    if inference.headless:
+        results = inference.run_inferenece_headless(max_timesteps=INFERENCE_STEP,nWorld=2000)
+        print(results)
+    else:
+        results = inference.run_inference(max_timesteps=INFERENCE_STEP)  # Run for 500 steps (~25 seconds at 20Hz)
+            # Print results summary
+        print(f"\n=== INFERENCE RESULTS ===")
+        print(f"Success: {results['success']}")
+        print(f"Duration: {results['duration']:.2f}s")
+        print(f"Total steps: {results['total_steps']}")
+        if results['completion_step']:
+            print(f"Completed at step: {results['completion_step']}")
+            print(f"Completion rate: {results['completion_rate']:.1%}")
+        print(f"=========================")
     
-    # Print results summary
-    print(f"\n=== INFERENCE RESULTS ===")
-    print(f"Success: {results['success']}")
-    print(f"Duration: {results['duration']:.2f}s")
-    print(f"Total steps: {results['total_steps']}")
-    if results['completion_step']:
-        print(f"Completed at step: {results['completion_step']}")
-        print(f"Completion rate: {results['completion_rate']:.1%}")
-    print(f"=========================")
+
 
 
 if __name__ == "__main__":
