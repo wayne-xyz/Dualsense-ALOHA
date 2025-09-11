@@ -44,6 +44,7 @@ https://github.com/user-attachments/assets/ed068ce1-df7b-4f3d-b33d-2e8555eb3b15
 
 
 ## MuJoCo Warp Accelerator
+<img width="2471" height="1573" alt="Warp Compare" src="https://github.com/user-attachments/assets/a78020a2-0b3c-456a-8cba-c6f9d2f13ab1" />
 
 
 ## Reflections
