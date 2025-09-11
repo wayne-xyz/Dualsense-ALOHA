@@ -1,3 +1,6 @@
+<img width="1282" height="404" alt="Group 7" src="https://github.com/user-attachments/assets/02a92b52-0249-4eab-9ca0-349b0f661da9" />
+
+
 # Dualsense-ALOHA
 Dualsense™ Controller Teleoperation and ACT autonomy IL on ALOHA for one Bigym benchmark task
 
