@@ -1,6 +1,13 @@
 # Dualsense-ALOHA
 Dualsense™ Controller Teleoperation and ACT autonomy IL on ALOHA for one Bigym benchmark task
 
+**Outcomes:**
+1. The ACT model successfully completed the task.
+2. Implemented a multi-buffer inference system for improved movement stability, and applied an inference result scaler to address action attenuation—ensuring that the movement amplitude was sufficient to avoid object penetration in this scenario 100% avoided.
+3. Integrated MuJoCo Warp in headless mode, achieving a 10x increase in step speed.
+
+
+**Intro:**
 - Insipred by the [Nitendo-Aloha](https://github.com/AlmondGod/Nintendo-Aloha)
 - Reproduce the implementation and concept of Nintendo-Aloha and replace the controller to be compatible with Dualsense™ Controller
 - Explore ACT IL, Mujoco, Warp
