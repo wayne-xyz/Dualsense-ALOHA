@@ -34,7 +34,10 @@ https://github.com/user-attachments/assets/cee4a915-c5a2-44ed-bc1a-9dd3fbc2a980
 Model inference entry point: [controllers/demonstration/run_inference_temporalAgg.py](controllers/demonstration/run_inference_temporalAgg.py)
 
 
-https://github.com/user-attachments/assets/3fcfb062-d25a-4dc6-bb66-348202083eaa
+
+https://github.com/user-attachments/assets/ed068ce1-df7b-4f3d-b33d-2e8555eb3b15
+
+
 
 
 
