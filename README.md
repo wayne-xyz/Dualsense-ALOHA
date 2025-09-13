@@ -47,8 +47,6 @@ Model inference entry point: [controllers/demonstration/run_inference_temporalAg
 
 
 
-https://github.com/user-attachments/assets/4c79fef5-9599-491c-afbc-9482eb9188e1
-
 
 
 
@@ -69,7 +67,11 @@ After ACT model training, action outputs are often weaker than intended, leading
 
 
 
-https://github.com/user-attachments/assets/322c5117-98e4-4109-a300-b1feb3284f6b
+
+
+https://github.com/user-attachments/assets/b036f41a-cefa-47b0-927b-05a396f75896
+
+
 
 
 ### 2. Discrete Action Handling
