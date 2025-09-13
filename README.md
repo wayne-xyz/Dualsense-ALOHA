@@ -68,8 +68,10 @@ After ACT model training, action outputs are often weaker than intended, leading
 
 
 
+https://github.com/user-attachments/assets/175b3d9d-7c23-4e3f-8d4d-24566844e96b
 
-https://github.com/user-attachments/assets/b036f41a-cefa-47b0-927b-05a396f75896
+
+
 
 
 
