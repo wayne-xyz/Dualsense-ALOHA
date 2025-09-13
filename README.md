@@ -45,7 +45,10 @@ Model inference entry point: [controllers/demonstration/run_inference_temporalAg
 
 
 
-https://github.com/user-attachments/assets/ed068ce1-df7b-4f3d-b33d-2e8555eb3b15
+
+
+https://github.com/user-attachments/assets/4c79fef5-9599-491c-afbc-9482eb9188e1
+
 
 
 
